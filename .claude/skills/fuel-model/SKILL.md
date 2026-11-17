@@ -55,8 +55,11 @@ belong in one constants block, never as magic numbers.
 - Ignition off → engine rate 0. Heater fuel continues (`/heater-accounting`).
 - Negative or absurd rates (> 40 gph) → drop the sample and log a warning.
 - State (`gal_after_last_fill`, `engine_used_gal`, `heater_used_gal`, last
-  fill metadata) is persisted after every update, as a retained MQTT topic
-  plus Influx, so a reboot resumes the counter instead of resetting it.
+  fill metadata) goes to a local state file with an atomic write (temp file,
+  `fsync`, rename): at least every 10 s while driving and immediately on every
+  fill. At most 10 s of fuel is lost on a power cut. Never rely on retained
+  MQTT for this. Mosquitto saves retained messages to disk on an interval, so
+  a power cut can roll the tank back by the whole interval.
 
 ## mpg definitions
 

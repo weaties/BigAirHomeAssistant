@@ -1,6 +1,6 @@
 ---
 name: dash-display
-description: The ESPHome e-paper dash display that replaces the stock fuel gauge for the 47-gallon tank — current hardware (LilyGo e-paper + LoRa board, battery, deep sleep), the wake/fetch/render/sleep cycle, layout (fuel, range, mpg sparkline), stale-data and low-fuel states, and how to add a screen. TRIGGER when editing esphome/dash_display*.yaml or esphome/common/display*, the mpg_trip_spark sensor, or display-related HA helpers. DO NOT trigger for other ESPHome nodes (W-Bus heater, INA228 loads) unless they share a common fragment.
+description: The ESPHome e-paper dash display that replaces the stock fuel gauge for the 47-gallon tank — current hardware (LilyGo e-paper + LoRa board, battery, deep sleep), the wake/fetch/render/sleep cycle, layout (fuel, range, mpg sparkline), stale-data and low-fuel states, and how to add a screen. TRIGGER when editing esphome/dash_display*.yaml, the mpg_trip_spark sensor, or display-related HA helpers. DO NOT trigger for other ESPHome nodes (W-Bus heater, INA228 loads) unless they share a common fragment.
 ---
 
 # Dash display

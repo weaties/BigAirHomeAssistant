@@ -55,7 +55,7 @@ it is referenced, so the rule stands without the skill.
  │ (OBD/PRO)│             │ → gpsd   │            │ MPPT, DC-DC,     │      │ INA228 load sensors   │
  └────┬─────┘             └────┬─────┘            │ shore charger    │      │ e-paper dash display ◄┼──┐
       │ MQTT                   │ TCP 2947         └───┬──────────────┘      └──────────┬────────────┘  │
-      ▼                        ▼                      │ Venus OS MQTT / HA BLE         │ native API     │
+      ▼                        ▼                      │ VE.Direct / HA BLE             │ MQTT / API     │
  ┌────────────────────────────────────────────────────┴────────────────────────────────┴───────────┐   │
  │ Raspberry Pi (Pi OS, Docker Compose, in-van Wi-Fi hotspot, no internet required)                │   │
  │                                                                                                  │   │
@@ -72,8 +72,10 @@ it is referenced, so the rule stands without the skill.
 Principles:
 
 - **MQTT is the backbone.** Every source publishes to Mosquitto; every
-  consumer subscribes. Devices only HA can talk to (Victron BLE) are pushed
-  to MQTT with `mqtt_statestream`.
+  consumer subscribes. ESPHome telemetry nodes publish to MQTT directly
+  (Decision #23). Only devices HA alone can talk to (Victron BLE) are pushed
+  to MQTT with `mqtt_statestream`. The dash display reads HA over the native
+  API.
 - **bigair is the single InfluxDB writer.** HA's InfluxDB integration is not
   used — its entity-shaped schema would fight ours. One writer, one schema.
 - **Hardware isolation.** Only edge modules (`mqtt_io.py`, `influx_io.py`,
@@ -84,9 +86,12 @@ Principles:
 - **Decode early, store clean.** Raw WiCAN JSON / NMEA / W-Bus → dataclass
   with units converted at the edge; unit is in every field name.
 - **Timestamps are UTC** everywhere; convert to local only for display.
-- **Derived state survives restarts.** The fuel model's state (gallons at
-  last fill, gallons used since) is persisted (retained MQTT + Influx) so a
-  reboot never resets the tank.
+- **Derived state survives power loss.** The fuel model's state (gallons
+  at last fill, gallons used since) is written to a local state file with an
+  atomic write (temp file, `fsync`, rename) at least every 10 s while driving
+  and immediately on every fill. That file is what bigair restores from. The
+  retained MQTT copy is only for display: Mosquitto saves retained messages to
+  disk on an interval, so it can't be the source of truth.
 - **No business logic in `main.py`** or in HA YAML templates — HA displays
   and collects input; Python decides.
 
@@ -150,21 +155,21 @@ before a PR.
 
 **Units.** Fuel, distance and speed in US customary (`_gal`, `_mi`, `_mph`,
 `_mpg`) because every human input (pump receipt, odometer) is US. Everything
-else SI (`_c`, `_kpa`, `_v`, `_a`, `_w`, `_g_s`, `_lph` only where the raw
-source is litres). **Every field name ends in its unit.**
+else SI (`_c`, `_kpa`, `_v`, `_a`, `_w`, `_g_s`, `_ratio` for dimensionless, `_lph` only
+where the raw source is litres). **Every field name ends in its unit.**
 
 **Tags are low-cardinality only** (source, method, circuit, device). Never
 tag with trip IDs, prices, coordinates or free text.
 
 | Measurement | Bucket | Tags | Key fields |
 |---|---|---|---|
-| `engine` | raw | `source` (wican) | `rpm`, `coolant_temp_c`, `intake_air_temp_c`, `maf_g_s`, `engine_load_pct`, `boost_kpa`, `fuel_rate_lph` |
+| `engine` | raw | `source` (wican) | `rpm`, `coolant_temp_c`, `intake_air_temp_c`, `maf_g_s`, `faer_ratio`, `engine_load_pct`, `boost_kpa`, `fuel_rate_lph` |
 | `vehicle` | raw | `source` | `speed_mph`, `odometer_mi`, `battery_v` |
 | `driver` | raw | `source` (wican, can) | `throttle_pct`, `cruise_active`, `cruise_set_mph`, `brake_active` |
 | `fuel` | raw | `method` (fuel_rate, maf_faer, maf_fixed) | `tank_gal`, `engine_used_gal`, `heater_used_gal`, `range_mi`, `mpg_rolling`, `mpg_instant_30s`, `fuel_rate_gph` |
 | `heater` | raw | `method` (wbus_pulses, runtime_datasheet, current) | `running`, `power_level`, `pump_hz`, `fuel_gph`, `used_gal` |
 | `electrical` | raw | `device` (bmv700, mppt, dcdc, shore) | `voltage_v`, `current_a`, `power_w`, `soc_pct` |
-| `load` | raw | `circuit` (fan, webasto, lights, internet, inverter) | `current_a`, `voltage_v`, `power_w` |
+| `load` | raw | `circuit` (fan, webasto, lights, internet, inverter, pi) | `current_a`, `voltage_v`, `power_w` |
 | `track` | history | `source` (gps_usb) | `lat`, `lon`, `alt_m`, `speed_mph`, `heading_deg`, `mpg_30s`, `hdop`, `trip_id` |
 | `fill_up` | history | `source` (live, manual, historical), `fill_type` (full, partial), `status` (confirmed, pending, skipped) | `gallons`, `price_per_gal`, `total_cost`, `odometer_mi`, `lat`, `lon`, `tank_before_gal`, `tank_after_gal`, `mpg_since_full` |
 | `trip` | history | — | `distance_mi`, `fuel_gal`, `mpg`, `duration_s`, `idle_s`, `cruise_share`, `brake_events`, `trip_id` |
@@ -293,4 +298,28 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
 19. **2026-11-16 — USB GPS via gpsd** container; gps_logger is a gpsd
     client, not a serial parser.
 20. **2026-11-16 — M0 bootstrap as stacked PRs** (foundations → skills →
-    scaffold → roadmap), merged in order by Dan.
+    scaffold → roadmap), merged in order by Dan. Lesson: squash-merging a
+    stack makes each later PR conflict. Avoid stacking, or merge main into
+    the next branch and check the tree is unchanged.
+21. **2026-11-17 — The Pi is always on, powered from the house battery**
+    (Dan's choice). That means fewer hard power cuts than switched power, but
+    the Pi becomes a constant load (roughly 4–6 W, so 8–12 Ah/day at 12.8 V;
+    measure it). It's metered as circuit `pi`, and it needs a clean shutdown
+    before the battery's low-voltage cutoff. Hard cuts still happen (battery
+    disconnect, LVD), so durable state is still required (Decision #22).
+    Supply, draw and shutdown: issue #24.
+22. **2026-11-17 — Fuel state lives in an fsync'd local state file, not
+    retained MQTT** (see Architecture). Mosquitto's default retained-message
+    save interval is 30 min, so a power cut could silently roll the tank
+    back. `autosave_interval` is cut to 60 s, but only for display copies.
+23. **2026-11-17 — ESPHome telemetry nodes publish straight to MQTT**
+    (amends #4). The W-Bus heater and INA228 load nodes use ESPHome's `mqtt`
+    component, so fuel and energy accounting doesn't depend on HA being up.
+    `mqtt_statestream` is only for devices HA alone can reach (Victron
+    Bluetooth). The dash display keeps the native API, because it consumes HA
+    state.
+24. **2026-11-17 — System time comes from GPS.** A Pi has no real-time clock
+    (a Pi 5 has one but needs a battery fitted) and the van is often offline,
+    so after a cold boot every timestamp would be wrong. Run chrony with a
+    gpsd refclock; bigair refuses to write to Influx until the clock is synced
+    (tracked in issue #22).

@@ -18,7 +18,7 @@ are Critical tier.
   holds 1-min aggregates, `track`, `fill_up`, `trip` and other events.
 - **Names:** `snake_case`. Measurement = a domain noun (`engine`, `fuel`).
   **Field names end in their unit** (`_gal`, `_mi`, `_mph`, `_mpg`, `_c`,
-  `_kpa`, `_v`, `_a`, `_w`, `_pct`, `_g_s`, `_lph`, `_s`). Booleans are
+  `_kpa`, `_v`, `_a`, `_w`, `_pct`, `_ratio`, `_g_s`, `_lph`, `_s`). Booleans are
   bare adjectives (`running`, `cruise_active`).
 - **Tags are low-cardinality:** source, method, device, circuit, fill_type,
   status. Never put IDs, coordinates, prices or free text in tags. `trip_id`

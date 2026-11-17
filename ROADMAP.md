@@ -23,6 +23,9 @@ signal used is VERIFIED.
 |---|---|---|---|
 | 1 | #4 | On-van PID scan: bitmaps and first register update | — |
 | 1 | #15 | Pi bring-up: SSD, hotspot, compose stack, live smoke test | — |
+| 1 | #24 | Pi power from the house battery: supply, draw, low-battery shutdown | #15 |
+| 2 | #22 | System time from GPS (chrony + gpsd), Influx write guard | #15 |
+| 2 | #23 | Decide the distance source (OBD speed vs GPS vs odometer) | #4 |
 | 2 | #6 | InfluxDB writer edge, buckets, DBRP provisioning | #15 |
 | 2 | #5 | WiCAN MQTT ingest edge → `ObdSample` | #4 |
 | 2 | #19 | Mosquitto auth and ACLs | #15 |
@@ -34,7 +37,7 @@ signal used is VERIFIED.
 | 4 | #13 | HA MQTT discovery and availability | #5 |
 | 4 | #12 | Manual log-fill-up flow | #9, #13 |
 | 4 | #11 | Fill-up prompt: notification, parsing, re-prompt | #10, #13 |
-| 5 | #14 | GPS logger: gpsd, track points with `mpg_30s` | #8, #15 |
+| 5 | #14 | GPS logger: gpsd, track points with `mpg_30s` | #8, #15, #22 |
 | 5 | #17 | `mpg_trip_spark` sensor | #8 |
 | 5 | #16 | Dash display: identify board, flash, measure battery | #13, #17 |
 
