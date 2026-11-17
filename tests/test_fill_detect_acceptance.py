@@ -9,7 +9,7 @@ from tests.conftest import Drive, parse_ts
 
 
 @pytest.mark.xfail(
-    strict=True, raises=NotImplementedError, reason="M1: fill detection not built yet"
+    strict=True, raises=NotImplementedError, reason="M1 #10: fill detection not built yet"
 )
 def test_exactly_one_candidate_after_ignition_on(drive: Drive) -> None:
     exp = drive.expected["fill_up"]
