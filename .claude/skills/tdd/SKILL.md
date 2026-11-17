@@ -38,7 +38,7 @@ def test_idle_burns_fuel_without_distance() -> None:
 ## Acceptance tests for unbuilt features
 
 ```python
-@pytest.mark.xfail(strict=True, reason="M1 #<issue>: fuel integrator not built yet")
+@pytest.mark.xfail(strict=True, raises=NotImplementedError, reason="M1 #<issue>: …")
 def test_tank_after_drive_matches_fixture(drive: Drive) -> None: ...
 ```
 

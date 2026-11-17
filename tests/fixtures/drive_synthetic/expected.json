@@ -1,0 +1,46 @@
+{
+  "_comment": "Hand-derived from the segment table in generate.py. Do NOT regenerate from code under test. Tolerances: gallons ±0.01, miles ±0.05, mpg ±0.01, range ±1.0.",
+  "capacity_gal": 47.0,
+  "initial": {"tank_gal": 47.0, "last_fill_type": "full", "odometer_mi": 41200.0, "prior_mpg": 15.0},
+  "times": {
+    "start": "2026-06-01T15:00:00Z",
+    "highway_mid": "2026-06-01T16:05:00Z",
+    "idle_mid": "2026-06-01T16:39:45Z",
+    "park_start": "2026-06-01T17:15:00Z",
+    "ignition_on": "2026-06-01T17:35:00Z",
+    "end": "2026-06-01T17:51:00Z"
+  },
+  "pre_fill": {
+    "at": "2026-06-01T17:15:00Z",
+    "miles": 105.0,
+    "engine_used_gal": 7.05,
+    "tank_gal": 39.95,
+    "mpg_rolling": 14.894,
+    "range_mi": 595.0
+  },
+  "fill_up": {
+    "gallons": 7.05,
+    "fill_type": "full",
+    "mpg_since_full": 14.894,
+    "tank_before_gal": 39.95,
+    "tank_after_gal": 47.0,
+    "level_before_pct": 85.0,
+    "level_after_pct": 100.0,
+    "candidate_after": "2026-06-01T17:35:45Z",
+    "candidate_before": "2026-06-01T17:36:00Z",
+    "candidates_expected": 1
+  },
+  "end": {
+    "at": "2026-06-01T17:51:00Z",
+    "miles_since_fill": 10.0,
+    "engine_used_since_fill_gal": 0.70,
+    "tank_gal": 46.30,
+    "mpg_rolling": 14.839,
+    "range_mi": 687.0,
+    "odometer_mi": 41315.0
+  },
+  "instant_mpg_30s": {
+    "highway_mid": 15.476,
+    "idle_mid": null
+  }
+}
