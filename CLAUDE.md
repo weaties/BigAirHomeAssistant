@@ -134,7 +134,7 @@ docs/                # pid-register.md, carplay.md, hardware notes; docs/archive
 uv sync                                         # install deps (run first)
 uv run pytest                                   # all tests + coverage
 uv run ruff check . && uv run ruff format --check . && uv run mypy src/
-uv run yamllint homeassistant esphome deploy    # config lint
+uv run yamllint homeassistant esphome grafana deploy .github   # config lint
 uvx esphome config esphome/<node>.yaml          # validate one ESPHome node
 docker compose -f deploy/docker-compose.yml config   # validate the stack
 ```

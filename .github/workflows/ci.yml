@@ -64,3 +64,33 @@ jobs:
       # inherited mypy baseline count.
       - name: mypy
         run: uv run mypy src/
+
+  config:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: yamllint
+        run: uv run yamllint homeassistant esphome grafana deploy .github
+
+      - name: ESPHome config validation
+        run: |
+          cp esphome/secrets.yaml.example esphome/secrets.yaml
+          for f in esphome/*.yaml; do
+            case "$f" in *secrets*) continue ;; esac
+            uvx esphome config "$f"
+          done
+
+      - name: Docker Compose config validation
+        run: |
+          cp deploy/.env.example deploy/.env
+          docker compose -f deploy/docker-compose.yml config -q

@@ -6,7 +6,9 @@ body:
     id: description
     attributes:
       label: What happened?
-      description: A clear description of the bug. For wrong fuel/range numbers, include what the gauge, pump receipt or dipstick said.
+      description: >-
+        A clear description of the bug. For wrong fuel/range numbers, include what
+        the gauge, pump receipt or dipstick said.
     validations:
       required: true
 
