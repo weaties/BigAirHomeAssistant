@@ -1,0 +1,72 @@
+name: Bug Report
+description: Report something that isn't working correctly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug. For wrong fuel/range numbers, include what the gauge, pump receipt or dipstick said.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Park, fill 22.4 gal (full)
+        2. Ignition on
+        3. No fill-up notification arrives
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Fuel model / range
+        - Fill-up detection / prompt
+        - GPS / location track
+        - Home Assistant config / CarPlay
+        - Grafana dashboards
+        - Dash display (ESPHome)
+        - Heater accounting
+        - Electrical / Victron
+        - WiCAN / PIDs / CAN
+        - Historical import
+        - CI / tooling
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Van Pi (production)
+        - Mac (development)
+        - CI
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: e.g. 36ead41
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: docker compose logs, MQTT payloads, HA logbook. Redact GPS positions.
+      render: shell
