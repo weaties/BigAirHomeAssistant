@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import DRIVE_DIR, Drive, parse_ts
+from tests.support import DRIVE_DIR, Drive, parse_ts
 
 
 def _load_generator() -> object:

@@ -27,7 +27,8 @@ def test_idle_burns_fuel_without_distance() -> None:
 - `tests/fixtures/drive_synthetic/` has `drive.csv` (1 Hz),
   `expected.json` (hand-derived answers) and `generate.py` (a segment table
   → CSV).
-- Load it with the `drive` fixture from `tests/conftest.py`. Never parse the
+- Load it with the `drive` fixture (helpers and the `Drive` type live in
+  `tests/support.py`; never import from `conftest`). Never parse the
   CSV ad hoc in a test.
 - **Change the generator, not the CSV.** `test_fixture_is_generated` fails if
   the CSV differs from a fresh generation.
