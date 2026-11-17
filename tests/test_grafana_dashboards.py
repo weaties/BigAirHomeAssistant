@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -13,7 +12,7 @@ KNOWN_DATASOURCES = {"influx-van-raw", "influx-van-history"}
 FILES = sorted(DASH_DIR.glob("*.json"))
 
 
-def _datasource_uids(node: Any) -> list[str]:
+def _datasource_uids(node: object) -> list[str]:
     found: list[str] = []
     if isinstance(node, dict):
         ds = node.get("datasource")
