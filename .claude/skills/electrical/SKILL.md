@@ -38,7 +38,8 @@ Every row is **UNVERIFIED** until Dan confirms the model and ports
 ## Per-circuit loads: INA228 on ESP32 (Dan's choice)
 
 - One INA228 plus one shunt per circuit: fan, Webasto, lights, internet
-  gear, inverter. I²C addresses 0x40–0x4F allow up to 16 per bus.
+  gear, inverter, and the Pi itself (`pi`). The Pi is always on from the house
+  battery (CLAUDE.md Decision #21), so its draw counts in the daily budget. I²C addresses 0x40–0x4F allow up to 16 per bus.
 - **Shunt sizing:** pick the shunt so the circuit's max current gives close
   to (not over) the INA228's full-scale shunt voltage range. The inverter
   needs a high-current shunt, possibly its own Victron SmartShunt instead.
@@ -47,8 +48,10 @@ Every row is **UNVERIFIED** until Dan confirms the model and ports
   with the house battery negative.
 - ESPHome: check the current ESPHome docs for the INA2xx component that
   supports INA228 and pin to a version that has it. Publish `current_a`,
-  `voltage_v` and `power_w` per circuit to HA (native API). bigair records
-  them as `load` tagged with `circuit`.
+  `voltage_v` and `power_w` per circuit **straight to MQTT** with ESPHome's
+  `mqtt` component (Decision #23), so energy accounting doesn't depend on HA.
+  bigair records them as `load` tagged with `circuit`, and HA picks them up
+  through MQTT discovery for display.
 - Calibrate each channel against a clamp meter at a known load. Record the
   shunt resistance and calibration factor in the node YAML.
 

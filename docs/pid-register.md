@@ -36,7 +36,7 @@ answers them, and whether the values are sane, is **not known yet**.
 | MAF | `engine.maf_g_s` | `10` | (256A+B)/100 g/s | UNVERIFIED | — | Fuel-rate fallback. #520 saw it on a 2006 EU W906. |
 | Throttle position | `driver.throttle_pct` | `11` | A·100/255 | UNVERIFIED | — | On a diesel this may be the intake throttle valve, not the pedal. Prefer `49`. |
 | Run time since start | — | `1F` | 256A+B s | UNVERIFIED | — | Engine-hours helper |
-| O2 sensor 1, equivalence ratio | `engine.faer` | `24` | 2·(256A+B)/65536 | UNVERIFIED | — | Needed for the MAF×FAER fuel method. Seen in #520 (EU). |
+| O2 sensor 1, equivalence ratio | `engine.faer_ratio` | `24` | 2·(256A+B)/65536 | UNVERIFIED | — | Needed for the MAF×FAER fuel method. Seen in #520 (EU). |
 | Fuel tank level | — | `2F` | A·100/255 % | UNVERIFIED | — | Absent on #520's EU van. Even if present, it reads the stock sender, so it is not a 47-gal truth. |
 | Barometric pressure | — | `33` | A kPa | UNVERIFIED | — | |
 | Control module voltage | `vehicle.battery_v` | `42` | (256A+B)/1000 V | UNVERIFIED | — | History dashboard #3 |

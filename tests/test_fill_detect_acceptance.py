@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from bigair.fill_detect import FillDetector, FillDetectorConfig
-from tests.conftest import Drive, parse_ts
+from tests.support import Drive, parse_ts
 
 
 @pytest.mark.xfail(

@@ -92,7 +92,7 @@ class FillUp:
 
 @dataclass(frozen=True)
 class FuelState:
-    """Persisted fuel-model state; survives restarts (retained MQTT + Influx)."""
+    """Persisted fuel-model state; restored from bigair's fsync'd state file (CLAUDE.md)."""
 
     ts: datetime  # UTC
     gal_after_last_fill: float

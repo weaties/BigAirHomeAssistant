@@ -10,7 +10,9 @@ homeassistant:
 default_config:
 
 # MQTT broker connection is configured in the UI (config entry) per HA's
-# current MQTT integration; broker = the Mosquitto container.
+# current MQTT integration. HA runs with network_mode: host, so Compose
+# service names don't resolve for it: the broker is localhost:1883, not
+# "mosquitto". Containers on the Compose network (bigair) do use "mosquitto".
 
 logger:
   default: warning

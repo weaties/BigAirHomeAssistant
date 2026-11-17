@@ -23,7 +23,9 @@ OBD doesn't include it, so `tank_gal` must subtract `heater_used_gal`
 1. **W-Bus from an ESP32 (ESPHome).** W-Bus is a single-wire, K-line-style
    bus. The ESP32 UART needs a K-line/LIN transceiver, not a direct
    connection. Read on/off, operating state, power level and ideally the
-   **fuel pump frequency**. Read-only polling first. Commanding the heater
+   **fuel pump frequency**. Publish straight to MQTT with ESPHome's `mqtt`
+   component (Decision #23), so heater fuel keeps counting even if HA is down.
+   Read-only polling first. Commanding the heater
    (on/off from HA or CarPlay) comes later, because a write that goes wrong
    on a combustion appliance is a safety issue.
 2. **Current sensor on the heater feed** (an INA228 channel, `/electrical`).

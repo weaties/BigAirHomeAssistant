@@ -16,8 +16,7 @@ homeassistant/
   configuration.yaml        # minimal: default_config, homeassistant: packages: !include_dir_named packages
   packages/
     mqtt_backbone.yaml      # mqtt_statestream (HA-only devices → MQTT)
-    fill_up.yaml            # helpers, form script, notification automations
-    fuel_display.yaml       # display-only templates (e.g. range rounding)
+    fill_up.yaml            # helpers, form script, notification automations (M1)
   secrets.yaml.example      # committed; the real secrets.yaml is gitignored
 ```
 
@@ -58,6 +57,13 @@ rule.
   Parsing happens in Python (`/fill-up-events`).
 - Use `tag:` set to the `fill_id` so a re-prompt replaces the old
   notification.
+
+## Networking gotcha
+
+HA runs with `network_mode: host` (for mDNS, Bluetooth and Companion
+discovery), so it **can't resolve Compose service names**. From HA, the broker
+is `localhost:1883` and InfluxDB is `localhost:8086`. Bridge-network
+containers (bigair, Grafana) use `mosquitto` and `influxdb`.
 
 ## Local and offline
 
