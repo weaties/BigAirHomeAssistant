@@ -13,7 +13,7 @@ from bigair.signals import FillSource, FillStatus, FillType, FillUp, FuelState
 from tests.conftest import Drive, parse_ts
 
 pytestmark = pytest.mark.xfail(
-    strict=True, raises=NotImplementedError, reason="M1: fuel model not built yet"
+    strict=True, raises=NotImplementedError, reason="M1 #7 #8 #9: fuel model not built yet"
 )
 
 

@@ -36,4 +36,4 @@ class FillDetector:
 
     def update(self, sample: ObdSample, fix: GpsFix | None = None) -> FillCandidate | None:
         """Feed one sample; return a candidate exactly once per detected fill."""
-        raise NotImplementedError("M1: fill detection")
+        raise NotImplementedError("M1 #10: fill detection")
