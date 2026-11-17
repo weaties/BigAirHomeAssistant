@@ -1,0 +1,73 @@
+# BigAir in-van stack — Raspberry Pi OS + Docker Compose (CLAUDE.md → Decisions #2).
+# Everything local; no service needs internet at runtime.
+# Image tags are pinned; dependabot bumps them.
+name: bigair
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    restart: unless-stopped
+    ports: ["1883:1883"]
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./volumes/mosquitto/data:/mosquitto/data
+      - ./volumes/mosquitto/log:/mosquitto/log
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.11.1
+    restart: unless-stopped
+    network_mode: host  # mDNS, Bluetooth (Victron BLE), Companion app discovery
+    privileged: true  # Bluetooth adapter access
+    volumes:
+      - ../homeassistant:/config
+      - /run/dbus:/run/dbus:ro
+    environment:
+      TZ: ${TZ}
+
+  influxdb:
+    image: influxdb:2.7.11
+    restart: unless-stopped
+    ports: ["8086:8086"]
+    volumes:
+      - ./volumes/influxdb:/var/lib/influxdb2
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_ADMIN_USER}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_ADMIN_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: bigair
+      DOCKER_INFLUXDB_INIT_BUCKET: van_raw
+      DOCKER_INFLUXDB_INIT_RETENTION: 400d
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_ADMIN_TOKEN}
+
+  grafana:
+    image: grafana/grafana:13.2.6
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    depends_on: [influxdb]
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./volumes/grafana:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      INFLUX_GRAFANA_TOKEN: ${INFLUX_GRAFANA_TOKEN}
+
+  gpsd:
+    build: ./gpsd
+    restart: unless-stopped
+    ports: ["2947:2947"]
+    devices:
+      - ${GPS_DEVICE}:${GPS_DEVICE}
+    command: ["${GPS_DEVICE}"]
+    profiles: [hardware]
+
+  bigair:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on: [mosquitto, influxdb]
+    env_file: .env
+    profiles: [services]  # M1: services have no runnable loop yet
