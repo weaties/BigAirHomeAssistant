@@ -1,0 +1,155 @@
+{
+  "id": null,
+  "uid": "bigair-engine-history",
+  "title": "Engine history",
+  "tags": [
+    "bigair"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "description": "First three history signals. Values are only meaningful once the source PIDs are VERIFIED in docs/pid-register.md.",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Fuel rate",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "gph",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"fuel_rate_gph\") FROM \"fuel\" WHERE $timeFilter GROUP BY time($__interval) fill(null)"
+        }
+      ],
+      "description": "Engine fuel rate in gal/h, from the fuel model (any method)."
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Coolant temperature",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"coolant_temp_c\") FROM \"engine\" WHERE $timeFilter GROUP BY time($__interval) fill(null)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Battery voltage",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "volt",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"battery_v\") FROM \"vehicle\" WHERE $timeFilter GROUP BY time($__interval) fill(null)"
+        }
+      ],
+      "description": "Starter battery via OBD control-module voltage (PID 42, UNVERIFIED)."
+    }
+  ]
+}

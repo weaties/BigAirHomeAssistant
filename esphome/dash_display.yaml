@@ -1,0 +1,149 @@
+# Dash fuel display v0 — see .claude/skills/dash-display/SKILL.md.
+# Board: Dan's LilyGo T5-family e-paper + LoRa. Board/panel revision UNVERIFIED:
+# confirm from the silkscreen before trusting pins or the display model below.
+substitutions:
+  name: dash-display
+  low_fuel_gal: "8"
+  stale_after_s: "300"
+
+esphome:
+  name: ${name}
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: render_and_sleep
+
+esp32:
+  board: esp32dev  # UNVERIFIED — set from the actual board revision
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  power_save_mode: light
+  manual_ip:
+    static_ip: !secret dash_static_ip
+    gateway: !secret dash_gateway
+    subnet: !secret dash_subnet
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+deep_sleep:
+  id: deep_sleep_ctl
+  run_duration: 20s  # safety cap: never drain the battery on a failed connect
+  sleep_duration: 60s
+
+spi:
+  clk_pin: GPIO18  # UNVERIFIED pin map
+  mosi_pin: GPIO23  # UNVERIFIED pin map
+
+font:
+  - file: "gfonts://Roboto Condensed"
+    id: big
+    size: 28
+  - file: "gfonts://Roboto Condensed"
+    id: small
+    size: 12
+
+sensor:
+  - platform: homeassistant
+    id: tank_gal
+    entity_id: sensor.tank_gal
+  - platform: homeassistant
+    id: range_mi
+    entity_id: sensor.range_mi
+
+text_sensor:
+  - platform: homeassistant
+    id: mpg_spark
+    entity_id: sensor.mpg_trip_spark
+
+binary_sensor:
+  - platform: homeassistant
+    id: ignition
+    entity_id: binary_sensor.ignition
+  - platform: homeassistant
+    id: stay_awake
+    entity_id: input_boolean.dash_display_stay_awake
+    on_press:
+      - deep_sleep.prevent: deep_sleep_ctl
+    on_release:
+      - deep_sleep.allow: deep_sleep_ctl
+
+script:
+  - id: render_and_sleep
+    then:
+      - wait_until:
+          condition:
+            api.connected:
+          timeout: 10s
+      - delay: 2s  # let homeassistant sensors deliver their first state
+      - component.update: epaper
+      - delay: 3s  # e-paper refresh
+      - if:
+          condition:
+            binary_sensor.is_off: ignition
+          then:
+            - deep_sleep.enter:
+                id: deep_sleep_ctl
+                sleep_duration: 15min
+          else:
+            - deep_sleep.enter: deep_sleep_ctl
+
+display:
+  - platform: waveshare_epaper
+    id: epaper
+    model: 2.13in-ttgo-b73  # UNVERIFIED — try -b1 / -b74 / -dke per board revision
+    cs_pin: GPIO5  # UNVERIFIED pin map
+    dc_pin: GPIO17
+    busy_pin: GPIO4
+    reset_pin: GPIO16
+    rotation: 90
+    full_update_every: 10
+    update_interval: never
+    lambda: |-
+      // Stale: no fresh value from HA → strike-through, never a confident number.
+      bool stale = !id(tank_gal).has_state() || std::isnan(id(tank_gal).state)
+                   || !id(range_mi).has_state() || std::isnan(id(range_mi).state);
+      bool low = !stale && id(tank_gal).state < ${low_fuel_gal};
+      if (low) {
+        it.filled_rectangle(0, 0, it.get_width(), 34);
+        it.printf(4, 2, id(big), COLOR_OFF, "%.1f gal", id(tank_gal).state);
+      } else if (!stale) {
+        it.printf(4, 2, id(big), "%.1f gal", id(tank_gal).state);
+      } else {
+        it.print(4, 2, id(big), "-- gal");
+        it.line(0, 18, it.get_width(), 18);
+      }
+      if (!stale) {
+        it.printf(4, 38, id(small), "%.0f mi range", id(range_mi).state);
+      } else {
+        it.print(4, 38, id(small), "STALE - no data from Home Assistant");
+      }
+      // Sparkline: comma-separated mpg buckets for the current trip.
+      if (id(mpg_spark).has_state()) {
+        std::string s = id(mpg_spark).state;
+        std::vector<float> v;
+        size_t start = 0;
+        while (start < s.size()) {
+          size_t end = s.find(',', start);
+          if (end == std::string::npos) end = s.size();
+          v.push_back(atof(s.substr(start, end - start).c_str()));
+          start = end + 1;
+        }
+        const int x0 = 4, y0 = 100, h = 36, w = 180;
+        for (size_t i = 1; i < v.size(); i++) {
+          auto y = [&](float m) { return y0 - (int) (std::min(std::max(m, 0.0f), 30.0f) / 30.0f * h); };
+          it.line(x0 + (i - 1) * w / v.size(), y(v[i - 1]), x0 + i * w / v.size(), y(v[i]));
+        }
+      }

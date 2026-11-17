@@ -1,0 +1,26 @@
+# InfluxQL datasources over InfluxDB 2.7 DBRP mappings (see /influx-schema).
+apiVersion: 1
+datasources:
+  - name: InfluxDB van_raw
+    uid: influx-van-raw
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    jsonData:
+      dbName: van_raw
+      httpMode: POST
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: "Token ${INFLUX_GRAFANA_TOKEN}"
+    isDefault: true
+  - name: InfluxDB van_history
+    uid: influx-van-history
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    jsonData:
+      dbName: van_history
+      httpMode: POST
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: "Token ${INFLUX_GRAFANA_TOKEN}"

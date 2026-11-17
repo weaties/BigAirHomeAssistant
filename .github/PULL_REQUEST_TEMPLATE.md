@@ -14,7 +14,7 @@
 - [ ] `uv run ruff check .` — lint clean
 - [ ] `uv run ruff format --check .` — format clean
 - [ ] `uv run mypy src/` — types clean
-- [ ] Config validates (`uv run yamllint homeassistant esphome deploy`, `esphome config` if ESPHome touched)
+- [ ] Config validates (`uv run yamllint homeassistant esphome grafana deploy .github`, `esphome config` if ESPHome touched)
 - [ ] New tests added for new logic (written first)
 - [ ] Verified on the van (describe below) — required before a PID/CAN ID is marked VERIFIED
 

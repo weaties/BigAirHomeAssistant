@@ -1,0 +1,102 @@
+{
+  "id": null,
+  "uid": "bigair-mpg-map",
+  "title": "MPG map",
+  "tags": [
+    "bigair"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "description": "Track coloured by 30 s smoothed mpg. Basemap tiles need internet; offline tiles are an M2 decision.",
+  "panels": [
+    {
+      "id": 1,
+      "type": "geomap",
+      "title": "Track by mpg (30 s)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-history"
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-history"
+          },
+          "rawQuery": true,
+          "resultFormat": "table",
+          "query": "SELECT \"lat\", \"lon\", \"mpg_30s\", \"speed_mph\" FROM \"track\" WHERE $timeFilter"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 8,
+          "max": 25,
+          "unit": "none",
+          "decimals": 1,
+          "color": {
+            "mode": "continuous-RdYlGr"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "view": {
+          "id": "fit",
+          "lat": 0,
+          "lon": 0,
+          "zoom": 5
+        },
+        "controls": {
+          "showZoom": true,
+          "mouseWheelZoom": true
+        },
+        "basemap": {
+          "type": "default",
+          "name": "Basemap"
+        },
+        "layers": [
+          {
+            "type": "markers",
+            "name": "mpg",
+            "tooltip": true,
+            "location": {
+              "mode": "coords",
+              "latitude": "lat",
+              "longitude": "lon"
+            },
+            "config": {
+              "showLegend": true,
+              "style": {
+                "size": {
+                  "fixed": 4
+                },
+                "color": {
+                  "field": "mpg_30s",
+                  "fixed": "grey"
+                },
+                "opacity": 0.8,
+                "symbol": {
+                  "mode": "fixed",
+                  "fixed": "img/icons/marker/circle.svg"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

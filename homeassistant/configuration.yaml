@@ -1,0 +1,16 @@
+# Home Assistant — display and input layer only; no fuel logic here.
+# See .claude/skills/home-assistant-config/SKILL.md.
+homeassistant:
+  name: BigAir
+  unit_system: us_customary
+  time_zone: !secret time_zone
+  internal_url: !secret internal_url
+  packages: !include_dir_named packages
+
+default_config:
+
+# MQTT broker connection is configured in the UI (config entry) per HA's
+# current MQTT integration; broker = the Mosquitto container.
+
+logger:
+  default: warning
