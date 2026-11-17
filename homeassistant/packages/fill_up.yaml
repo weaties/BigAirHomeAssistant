@@ -1,0 +1,47 @@
+# Fill-up form + manual fallback. Detection, parsing and validation live in
+# bigair (Python); HA only collects input. See /fill-up-events.
+# M0 scaffold: helpers and the manual script. Notification automations land in M1.
+input_number:
+  fill_up_gallons:
+    name: Fill-up gallons
+    min: 0
+    max: 60
+    step: 0.001
+    mode: box
+    unit_of_measurement: gal
+  fill_up_price_per_gal:
+    name: Price per gallon
+    min: 0
+    max: 15
+    step: 0.001
+    mode: box
+    unit_of_measurement: USD/gal
+
+input_select:
+  fill_up_type:
+    name: Fill type
+    options:
+      - full
+      - partial
+
+input_text:
+  fill_up_pending_id:
+    name: Pending fill id
+    max: 64
+
+script:
+  log_fill_up:
+    alias: Log fill-up
+    icon: mdi:gas-station
+    description: >-
+      Submit the fill-up form. Exposed in CarPlay Quick access. bigair creates a
+      source=manual fill when no candidate is pending.
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: bigair/fill_up/response
+          payload: >-
+            {"fill_id": "{{ states('input_text.fill_up_pending_id') }}",
+             "kind": "{{ states('input_select.fill_up_type') }}",
+             "gallons": {{ states('input_number.fill_up_gallons') | float(0) }},
+             "price_per_gal": {{ states('input_number.fill_up_price_per_gal') | float(0) }}}
