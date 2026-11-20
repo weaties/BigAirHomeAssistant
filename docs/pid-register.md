@@ -31,7 +31,7 @@ The formulas are the published SAE J1979 definitions. The first scan
 | Coolant temp | `engine.coolant_temp_c` | `05` | A − 40 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 54 °C after 16 min idle. History dashboard #2 |
 | Intake MAP (boost) | `engine.boost_kpa` | `0B` | A kPa (absolute) | ABSENT | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | Bitmap bit clear; `NO DATA`. Look for an extended boost PID (`70`/`87` are in the `7E8` bitmap) or a DID |
 | RPM | `engine.rpm` | `0C` | (256A+B)/4 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 862 rpm at warm-up idle; compare with the tach |
-| Vehicle speed | `vehicle.speed_mph` | `0D` | A km/h → ×0.621371 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 0 parked. Verify against GPS at steady 30 and 60 mph |
+| Vehicle speed | `vehicle.speed_mph` | `0D` | A km/h → ×0.621371 | VERIFIED | [2026-11-20 drive](scans/2026-11-20-drive-speed.md) | Within ±2 % of GPS at steady ~25 mph (+0.6 %) and ~40 mph (−0.2 %); integrated distance −0.06 % over 5 mi. Whole-km/h resolution: compare means, not single samples |
 | Intake air temp | `engine.intake_air_temp_c` | `0F` | A − 40 | ABSENT | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | Bitmap bit clear. Extended IAT `68` is in the `7E8` bitmap |
 | MAF | `engine.maf_g_s` | `10` | (256A+B)/100 g/s | ABSENT | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | Bitmap bit clear. Extended MAF `66` responds instead (row below) |
 | MAF (extended, sensor A) | `engine.maf_g_s` | `66` | (256B+C)/32 g/s, A = sensor-support bits | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 23.8 g/s at warm-up idle |
