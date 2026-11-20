@@ -13,7 +13,7 @@ logic. Templates may format values, never compute them.
 
 ```
 homeassistant/
-  configuration.yaml        # minimal: default_config, homeassistant: packages: !include_dir_named packages
+  configuration.yaml        # explicit integrations (no default_config, Decision #27) + packages: !include_dir_named packages
   packages/
     mqtt_backbone.yaml      # M3, not present yet: mqtt_statestream for Victron BLE
     fill_up.yaml            # helpers, form script, notification automations (M1)
@@ -75,6 +75,16 @@ HA runs with `network_mode: host` (for mDNS, Bluetooth and Companion
 discovery), so it **can't resolve Compose service names**. From HA, the broker
 is `localhost:1883` and InfluxDB is `localhost:8086`. Bridge-network
 containers (bigair, Grafana) use `mosquitto` and `influxdb`.
+
+## Integrations: explicit, minimal
+
+There's no `default_config`. `configuration.yaml` lists what loads, and each
+line says which feature needs it. Before adding an integration, check it
+works offline and isn't only there because HA discovered something on the
+network. Integrations added in the UI create config entries in
+`.storage/core.config_entries`. Remove unneeded ones in **Settings →
+Devices & services**, or via HA's REST API with a token, never by editing
+`.storage` by hand: the registry format changes between releases.
 
 ## Local and offline
 

@@ -7,7 +7,20 @@ homeassistant:
   internal_url: !secret internal_url
   packages: !include_dir_named packages
 
-default_config:
+# Explicit integrations instead of default_config (CLAUDE.md Decision #27).
+# default_config pulls in network discovery (dhcp, ssdp, zeroconf, bluetooth),
+# cloud, energy, voice and backup. In a van that's offline most of the time,
+# those only add errors and auto-discovered junk. Add an integration here
+# when a feature needs it, and say which one. Dependencies (http, api,
+# websocket_api, recorder, …) load automatically.
+frontend:        # web UI (pulls in config, api, auth, lovelace, onboarding)
+history:         # entity history in the UI
+logbook:         # Activity panel
+mobile_app:      # iPhone Companion app: notifications, fill-up prompts, CarPlay
+system_health:   # Settings → System → Repairs/health
+# Not loaded on purpose, re-add when needed:
+#   bluetooth       M3 Victron instant readout (frees the radio for the XGPS160 trial)
+#   assist_pipeline CarPlay Assist "what's my range?" (UNVERIFIED offline)
 
 # MQTT broker connection is configured in the UI (config entry) per HA's
 # current MQTT integration. HA runs with network_mode: host, so Compose
