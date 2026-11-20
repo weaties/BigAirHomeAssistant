@@ -91,7 +91,11 @@ in `docs/hardware/pi-setup.md`.
 not fsynced, display copy only). It holds `ts` (when the service wrote it),
 `tank_gal`, `range_mi`, `capacity_gal`, `stale`, `calibrating` and
 `mpg_spark` (current-trip buckets, every 2 mi of measured driving; a new trip
-starts after a 30 min park). `bigair display` reads it on every frame
+starts after a 30 min park), `van_battery_v`, and the economy numbers
+`mpg_rolling`, `mpg_instant_30s`, `mpg_since_full` and `trip_mpg`.
+`mpg_rolling` is `null` until the 150 mi window holds at least 50 measured
+miles: below that the model's value is the configured prior, which must never
+be drawn as a measurement. The dash shows `--` and "avg after 50 mi" instead. `bigair display` reads it on every frame
 (`DISPLAY_GAUGE_FILE`).
 
 The gauge is stale (numbers struck through) if the service says so (moving

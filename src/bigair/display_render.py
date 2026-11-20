@@ -33,6 +33,10 @@ class GaugeState:
     stale: bool = False  # the service says its inputs stopped (moving, no data)
     calibrating: bool = False  # 5E not yet VERIFIED (Decision #32)
     van_battery_v: float | None = None  # WiCAN ATRV, fresh only (debug strip)
+    mpg_rolling: float | None = None  # 150 mi average; None until measured (not the prior)
+    mpg_instant: float | None = None  # trailing 30 s
+    mpg_since_full: float | None = None  # last full-to-full interval
+    trip_mpg: float | None = None  # current trip average
 
 
 def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
@@ -55,6 +59,10 @@ def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
         stale=bool(d.get("stale", False)),
         calibrating=bool(d.get("calibrating", False)),
         van_battery_v=num("van_battery_v"),
+        mpg_rolling=num("mpg_rolling"),
+        mpg_instant=num("mpg_instant_30s"),
+        mpg_since_full=num("mpg_since_full"),
+        trip_mpg=num("trip_mpg"),
     )
 
 
@@ -164,8 +172,21 @@ def _sparkline(
     hi = max(values) + 2.0
     step = (x1 - x0) / (len(values) - 1)
     pts = [(x0 + i * step, y1 - (v - lo) / (hi - lo) * (y1 - y0)) for i, v in enumerate(values)]
-    draw.text((x1 - 300, y0 - 34), f"trip {values[-1]:.1f} mpg", font=_font(28), fill=BLACK)
     draw.line(pts, fill=BLACK, width=5, joint="curve")
+
+
+def mpg_lines(state: GaugeState) -> tuple[str, str, str]:
+    """(big number, its label, detail line) for the economy block."""
+
+    def f(v: float | None) -> str:
+        return "--" if v is None else f"{v:.1f}"
+
+    big = f(state.mpg_rolling)
+    label = "150 mi avg" if state.mpg_rolling is not None else "avg after 50 mi"
+    detail = (
+        f"now {f(state.mpg_instant)} · trip {f(state.trip_mpg)} · fill {f(state.mpg_since_full)}"
+    )
+    return big, label, detail
 
 
 def status_text(state: GaugeState, now: datetime, tz: str) -> str:
@@ -221,6 +242,15 @@ def render_gauge(
     rng = "--" if state.range_mi is None else f"{state.range_mi:.0f}"
     draw.text((40, 265), f"{rng} mi range", font=_font(80), fill=BLACK)
 
+    # Economy block (right of the range): measured 150 mi average, then details.
+    big, label, detail = mpg_lines(state)
+    draw.text((600, 258), big, font=_font(72), fill=BLACK)
+    draw.text(
+        (600 + draw.textlength(big, font=_font(72)) + 12, 290), "mpg", font=_font(32), fill=BLACK
+    )
+    draw.text((604, 336), label, font=_font(24), fill=GREY)
+    draw.text((40, 352), detail, font=_font(26), fill=BLACK)
+
     # Stale: strike through the numbers so an old value never reads as current.
     if stale and state.tank_gal is not None:
         draw.line([(30, 120), (600, 120)], fill=ink, width=8)
@@ -230,10 +260,10 @@ def render_gauge(
         _sparkline(draw, state.mpg_spark, (40, 380, 920, 480))
     else:
         # Drive-testing mode: the debug strip takes the sparkline's place.
-        draw.rectangle((20, 375, WIDTH - 20, 485), outline=BLACK, width=3)
+        draw.rectangle((20, 388, WIDTH - 20, 490), outline=BLACK, width=3)
         line = debug_text(debug, now)
         font = fit_font(draw, line, max_width=WIDTH - 80, start=40)
-        draw.text((40, 395), line, font=font, fill=BLACK)
+        draw.text((40, 400), line, font=font, fill=BLACK)
         draw.text((40, 445), f"debug @ {_local(debug.updated, tz)}", font=_font(28), fill=GREY)
 
     # Footer: local clock + status.
