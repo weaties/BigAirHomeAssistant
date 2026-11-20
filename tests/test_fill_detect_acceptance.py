@@ -1,4 +1,4 @@
-"""Fill-detection acceptance test against the synthetic drive (xfail until M1)."""
+"""Fill-detection acceptance test against the synthetic drive (#10)."""
 
 from __future__ import annotations
 
@@ -8,9 +8,6 @@ from bigair.fill_detect import FillDetector, FillDetectorConfig
 from tests.support import Drive, parse_ts
 
 
-@pytest.mark.xfail(
-    strict=True, raises=NotImplementedError, reason="M1 #10: fill detection not built yet"
-)
 def test_exactly_one_candidate_after_ignition_on(drive: Drive) -> None:
     exp = drive.expected["fill_up"]
     detector = FillDetector(FillDetectorConfig(capacity_gal=drive.expected["capacity_gal"]))

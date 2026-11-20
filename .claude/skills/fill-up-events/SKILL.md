@@ -36,8 +36,19 @@ SETTLING ──(Δ below threshold, or vehicle moves before settling)──► D
 ```
 
 - Level samples are converted to gallon-equivalents with the sender's
-  calibration table before comparing. Thresholds are in gallons and are
-  config values.
+  calibration table before comparing (`FillDetectorConfig.level_table`:
+  sender percent → fraction of capacity, piecewise linear, linear until
+  learned). Thresholds are in gallons and are config values.
+- `level_after` is the median of the last 30 s of the settle window, so
+  slosh in the first seconds after the engine starts is ignored.
+- A stop with the engine running (speed 0 for 60 s) also parks. Settling
+  then starts at the next ignition on. Driving off from a running stop
+  goes back to DRIVING with no check.
+- Ignition off during SETTLING returns to PARKED and keeps the original
+  `level_before`, so cycling the ignition at the pump gives one candidate.
+- **Known gap:** driving off within 45 s of ignition on misses the fill.
+  The manual flow covers it. Revisit with on-van data: if the sender reads
+  steady at key-on, `settle_s` can shrink.
 - The check happens **after ignition on** because the WiCAN and ECU are
   asleep while parked with the ignition off. The comparison is "last
   settled level before off" vs "first settled level after on".
