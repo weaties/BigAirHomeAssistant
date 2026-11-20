@@ -272,13 +272,8 @@ class FuelModel:
         s = self.state
         return s.gal_after_last_fill - s.engine_used_gal - s.heater_used_gal
 
-    @property
-    def mpg_rolling(self) -> float:
-        """Miles ÷ engine gallons over the most recent rolling_window_mi of driving.
-
-        Doesn't reset at fills. Below rolling_min_mi of history, falls back to
-        the latest full-to-full mpg, else the configured prior.
-        """
+    def _rolling_window(self) -> tuple[float, float]:
+        """(miles, gallons) in the most recent rolling_window_mi of measured driving."""
         window = self.config.rolling_window_mi
         chunks = list(self._rolling)
         rest_mi = sum(c.miles for c in chunks[1:])
@@ -287,6 +282,22 @@ class FuelModel:
         share = 1.0 if oldest.miles == 0 else min(1.0, max(0.0, window - rest_mi) / oldest.miles)
         miles = rest_mi + oldest.miles * share
         gal = sum(c.gal for c in chunks[1:]) + oldest.gal * share
+        return miles, gal
+
+    @property
+    def mpg_rolling_measured(self) -> bool:
+        """True once mpg_rolling comes from driving, not the fallback (≥ rolling_min_mi)."""
+        miles, gal = self._rolling_window()
+        return miles >= self.config.rolling_min_mi and gal > 0
+
+    @property
+    def mpg_rolling(self) -> float:
+        """Miles ÷ engine gallons over the most recent rolling_window_mi of driving.
+
+        Doesn't reset at fills. Below rolling_min_mi of history, falls back to
+        the latest full-to-full mpg, else the configured prior.
+        """
+        miles, gal = self._rolling_window()
         if miles < self.config.rolling_min_mi or gal <= 0:
             return self.state.mpg_since_full or self.config.prior_mpg
         return miles / gal

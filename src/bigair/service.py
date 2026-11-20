@@ -43,6 +43,10 @@ class ServiceConfig:
     fuel_method: str = "fuel_rate"
 
 
+def _r(v: float | None) -> float | None:
+    return None if v is None else round(v, 2)
+
+
 class FuelService:
     def __init__(self, config: ServiceConfig, model: FuelModel | None) -> None:
         self.config = config
@@ -156,6 +160,13 @@ class FuelService:
             "calibrating": not self.config.fuel_rate_verified,
             "mpg_spark": [round(v, 2) for v in self.trip.buckets],
             "van_battery_v": self._fresh_battery_v(now),
+            # Rolling mpg only once measured: below 50 mi it's the prior, not data.
+            "mpg_rolling": (
+                round(m.mpg_rolling, 2) if m is not None and m.mpg_rolling_measured else None
+            ),
+            "mpg_instant_30s": _r(m.mpg_instant_30s if m else None),
+            "mpg_since_full": _r(m.mpg_since_full if m else None),
+            "trip_mpg": _r(self.trip.trip_mpg),
         }
 
     def _fresh_battery_v(self, now: datetime) -> float | None:

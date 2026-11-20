@@ -33,11 +33,22 @@ class TripMpg:
         self._buckets: deque[float] = deque(maxlen=max_buckets)
         self._miles = 0.0
         self._gal = 0.0
+        self._trip_miles = 0.0
+        self._trip_gal = 0.0
         self._last: ObdSample | None = None  # last ignition-on sample with speed and rate
 
     @property
     def buckets(self) -> tuple[float, ...]:
         return tuple(self._buckets)
+
+    @property
+    def trip_mpg(self) -> float | None:
+        """Whole-trip average, once there's at least half a mile of it."""
+        if self._trip_miles < 0.5:
+            return None
+        if self._trip_gal <= 0:
+            return self.cap_mpg
+        return min(self._trip_miles / self._trip_gal, self.cap_mpg)
 
     def update(self, sample: ObdSample) -> None:
         if not sample.ignition or sample.speed_mph is None or sample.fuel_rate_gph is None:
@@ -48,14 +59,18 @@ class TripMpg:
         gap = sample.ts - last.ts
         if gap > self.new_trip_after:
             self._buckets.clear()
-            self._miles = self._gal = 0.0
+            self._miles = self._gal = self._trip_miles = self._trip_gal = 0.0
             return
         dt = gap.total_seconds()
         if dt <= 0 or dt > MAX_STEP_S:
             return
         assert last.speed_mph is not None and last.fuel_rate_gph is not None
-        self._miles += (last.speed_mph + sample.speed_mph) / 2 * dt / 3600
-        self._gal += (last.fuel_rate_gph + sample.fuel_rate_gph) / 2 * dt / 3600
+        miles = (last.speed_mph + sample.speed_mph) / 2 * dt / 3600
+        gal = (last.fuel_rate_gph + sample.fuel_rate_gph) / 2 * dt / 3600
+        self._miles += miles
+        self._gal += gal
+        self._trip_miles += miles
+        self._trip_gal += gal
         if self._miles >= self.bucket_mi - EPS_MI:
             mpg = self.cap_mpg if self._gal <= 0 else min(self._miles / self._gal, self.cap_mpg)
             self._buckets.append(mpg)
