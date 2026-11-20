@@ -1,7 +1,6 @@
 """Fuel-model acceptance tests against the synthetic drive.
 
-Fill tests stay xfail(strict=True) until #9 — when they XPASS, remove the
-marker in the same PR (see /tdd).
+Built in #7 (integrator), #8 (mpg, range) and #9 (fills).
 """
 
 from __future__ import annotations
@@ -11,10 +10,6 @@ import pytest
 from bigair.fuel_model import FuelModel, FuelModelConfig
 from bigair.signals import FillSource, FillStatus, FillType, FillUp, FuelState
 from tests.support import Drive, parse_ts
-
-needs_fills = pytest.mark.xfail(
-    strict=True, raises=NotImplementedError, reason="M1 #9: fill reset not built yet"
-)
 
 
 def _fresh_model(drive: Drive) -> FuelModel:
@@ -56,7 +51,6 @@ def test_tank_range_and_mpg_before_fill(drive: Drive) -> None:
     assert model.range_mi == pytest.approx(exp["range_mi"], abs=1.0)
 
 
-@needs_fills
 def test_full_fill_resets_tank_and_gives_true_mpg(drive: Drive) -> None:
     model = _fresh_model(drive)
     _run(model, drive, drive.expected["pre_fill"]["at"])
@@ -67,7 +61,6 @@ def test_full_fill_resets_tank_and_gives_true_mpg(drive: Drive) -> None:
     )
 
 
-@needs_fills
 def test_tank_range_and_mpg_at_end(drive: Drive) -> None:
     exp = drive.expected
     model = _fresh_model(drive)

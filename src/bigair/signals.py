@@ -101,3 +101,7 @@ class FuelState:
     last_fill_type: FillType
     stale: bool = False
     gap_gal: float = 0.0  # share of engine_used_gal estimated across data gaps
+    miles_since_full: float | None = 0.0  # None: no known full fill to count from
+    pump_gal_since_full: float = 0.0  # partial-fill pump gallons since the last full fill
+    mpg_since_full: float | None = None  # true mpg of the latest full-to-full interval
+    last_fill_id: str | None = None  # makes re-delivered fills a no-op
