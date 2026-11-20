@@ -1,8 +1,0 @@
-# Push HA-only devices (e.g. Victron BLE) onto MQTT so bigair can record them
-# — bigair is the single InfluxDB writer (CLAUDE.md → Decisions #4).
-mqtt_statestream:
-  base_topic: homeassistant/statestream
-  publish_attributes: false
-  publish_timestamps: true
-  include:
-    entities: []  # M3: Victron BLE entities once device models are confirmed
