@@ -38,8 +38,8 @@ signal used is VERIFIED.
 | 4 | #12 | Manual log-fill-up flow | #9, #13 |
 | 4 | #11 | Fill-up prompt: notification, parsing, re-prompt | #10, #13 |
 | 5 | #14 | GPS logger: gpsd, track points with `mpg_30s` | #8, #15, #22 |
-| 5 | #17 | `mpg_trip_spark` sensor | #8 |
-| 5 | #16 | Dash display: identify board, flash, measure battery | #13, #17 |
+| 5 | #17 | Feed the dash display from the fuel model (tank, range, trip-mpg buckets) | #8 |
+| 5 | #16 | Dash display: board identified (T5 S3 PRO), eink-screen firmware pointed at `bigair display`; measure battery | — |
 
 The logic issues (#7–#10) can start immediately against the fixture, in
 parallel with the hardware issues (#4, #15).

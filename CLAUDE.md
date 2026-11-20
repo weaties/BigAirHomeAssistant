@@ -49,35 +49,39 @@ it is referenced, so the rule stands without the skill.
 ## Architecture
 
 ```
- OBD-II port                 Bluetooth              Bluetooth / VE.Direct      ESP32 nodes (ESPHome)
- ┌──────────┐             ┌──────────┐            ┌──────────────────┐      ┌───────────────────────┐
- │ WiCAN    │             │ BT GPS   │            │ Victron BMV-700, │      │ W-Bus heater (Webasto)│
- │ (OBD/PRO)│             │ → gpsd*  │            │ MPPT, DC-DC,     │      │ INA228 load sensors   │
- └────┬─────┘             └────┬─────┘            │ shore charger    │      │ e-paper dash display ◄┼──┐
-      │ MQTT                   │ TCP 2947         └───┬──────────────┘      └──────────┬────────────┘  │
-      ▼                        ▼                      │ VE.Direct / HA BLE             │ MQTT / API     │
- ┌────────────────────────────────────────────────────┴────────────────────────────────┴───────────┐   │
- │ Raspberry Pi (Pi OS, Docker Compose, in-van Wi-Fi hotspot, no internet required)                │   │
- │                                                                                                  │   │
- │   Mosquitto ◄──── all signals flow through MQTT ────► Home Assistant ── Companion app / CarPlay │   │
- │      ▲  │                                              (display, notifications, user input,    │   │
- │      │  ▼                                               mqtt_statestream for HA-only devices) ─┼───┘
- │   bigair services (Python): ingest → decode → fuel model, fill detection, GPS track, heater    │
- │      │   publishes derived sensors (tank_gal, range_mi, mpg) back to MQTT w/ HA discovery     │
- │      ▼                                                                                           │
- │   InfluxDB 2.7  ◄── bigair is the only writer ──►  Grafana (provisioned dashboards, Geomap)     │
- └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ OBD-II port          Bluetooth          Bluetooth / VE.Direct       ESP32 nodes (ESPHome, future)
+ ┌──────────┐        ┌──────────┐       ┌──────────────────┐        ┌───────────────────────┐
+ │ WiCAN    │        │ XGPS160  │       │ Victron BMV-700, │        │ W-Bus heater (Webasto)│
+ │ (OBD/PRO)│        │ → gpsd*  │       │ MPPT, DC-DC,     │        │ INA228 load sensors   │
+ └────┬─────┘        └────┬─────┘       │ shore charger    │        └──────────┬────────────┘
+      │ MQTT              │ TCP 2947    └───┬──────────────┘                   │ MQTT
+      ▼                   ▼                 │ VE.Direct / HA BLE               ▼
+ ┌──────────────────────────────────────────┴──────────────────────────────────────────────────┐
+ │ Raspberry Pi (Pi OS, Docker Compose, van Wi-Fi, no internet required)                       │
+ │                                                                                             │
+ │   Mosquitto ◄── all signals flow through MQTT ──► Home Assistant ── Companion app / CarPlay  │
+ │      ▲  │                                         (display, notifications, user input)      │
+ │      │  ▼                                                                                   │
+ │   bigair services (Python): ingest → decode → fuel model, fill detection, GPS track, heater │
+ │      │   publishes derived sensors (tank_gal, range_mi, mpg) to MQTT w/ HA discovery        │
+ │      │   display server: renders the dash gauge frame ──── HTTP :8090 ───────┐              │
+ │      ▼                                                                       │              │
+ │   InfluxDB 2.7 ◄── bigair is the only writer ──► Grafana (dashboards, Geomap)│              │
+ └──────────────────────────────────────────────────────────────────────────────┼──────────────┘
+                                                                                ▼
+                                   Dash display: LilyGo T5 ePaper S3 PRO (eink-screen firmware)
 ```
 
-\* gpsd and chrony run on the Pi host, not in Docker (Decision #28).
+\* gpsd and chrony run on the Pi host, not in Docker (Decision #28). The dash
+display fetches a pre-rendered frame from bigair over the van Wi-Fi (Decision #29).
 
 Principles:
 
 - **MQTT is the backbone.** Every source publishes to Mosquitto; every
   consumer subscribes. ESPHome telemetry nodes publish to MQTT directly
   (Decision #23). Only devices HA alone can talk to (Victron BLE) are pushed
-  to MQTT with `mqtt_statestream`. The dash display reads HA over the native
-  API.
+  to MQTT with `mqtt_statestream`. The dash display fetches a frame from
+  bigair's display server (Decision #29).
 - **bigair is the single InfluxDB writer.** HA's InfluxDB integration is not
   used — its entity-shaped schema would fight ours. One writer, one schema.
 - **Hardware isolation.** Only edge modules (`mqtt_io.py`, `influx_io.py`,
@@ -107,7 +111,7 @@ Principles:
 | Storage | InfluxDB 2.7, queried with **InfluxQL** via DBRP mapping (no Flux) |
 | Dashboards | Grafana, provisioned from `grafana/provisioning/` |
 | Home automation | Home Assistant Container, YAML packages in `homeassistant/packages/` |
-| Embedded | ESPHome (`esphome/`) |
+| Embedded | ESPHome for future sensor nodes (heater, loads); the dash display runs the eink-screen firmware (`~/src/eink-screen`, PlatformIO + epdiy) |
 | GPS | `gpsd` on the Pi host (Debian package), reading the Bluetooth GPS via `/dev/rfcomm0` (Decision #28) |
 | Lint / format / types | `ruff` (line length 100), `mypy --strict`, `yamllint` |
 | Testing | `pytest`, `pytest-asyncio`, `pytest-cov` |
@@ -128,7 +132,6 @@ src/bigair/          # all Python; one small module per concern
 tests/               # pytest, runs anywhere, no hardware
 tests/fixtures/      # synthetic data with known-good answers (never real drives)
 homeassistant/       # HA config: configuration.yaml + packages/*.yaml
-esphome/             # one YAML per ESP32 node + common/ fragments
 grafana/provisioning/  # datasources/ and dashboards/*.json
 deploy/              # docker-compose.yml, bootstrap.sh (Pi setup), host/ (systemd + gpsd config), mosquitto.conf, .env.example
 docs/                # pid-register.md, carplay.md, hardware notes; docs/archive/ dated
@@ -141,8 +144,8 @@ docs/                # pid-register.md, carplay.md, hardware notes; docs/archive
 uv sync                                         # install deps (run first)
 uv run pytest                                   # all tests + coverage
 uv run ruff check . && uv run ruff format --check . && uv run mypy src/
-uv run yamllint homeassistant esphome grafana deploy .github   # config lint
-uvx esphome config esphome/<node>.yaml          # validate one ESPHome node
+uv run yamllint homeassistant grafana deploy .github   # config lint
+uv run bigair display --port 8090               # dash gauge server (preview: /api/display.png)
 docker compose -f deploy/docker-compose.yml config   # validate the stack
 uvx --from shellcheck-py shellcheck -x deploy/*.sh   # lint shell scripts
 
@@ -207,7 +210,7 @@ A PR's tier is the highest tier of any file it touches.
 | Tier | Files | Extra requirements |
 |---|---|---|
 | **Critical** | `fuel_model.py`, `fill_detect.py`, `heater.py`, Influx schema (Data model table, retention tasks) | TDD, fixture-based acceptance test, worked example in the PR body |
-| **High** | decoders/scalings, `historical/`, `homeassistant/packages/fuel*.yaml`, ESPHome display | Tests where logic exists; on-van verification noted before VERIFIED |
+| **High** | decoders/scalings, `historical/`, `homeassistant/packages/fuel*.yaml`, `display_render.py` | Tests where logic exists; on-van verification noted before VERIFIED |
 | **Standard** | other Python | Tests |
 | **Low** | docs, dashboards, CI, skills | Lint |
 
@@ -298,7 +301,7 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     hand** (Dan's choice; a better device later). Battery, ESPHome deep
     sleep, Wi-Fi to HA's native API; LoRa unused. Exact board/panel revision
     UNVERIFIED until read off the board. Sparkline comes from a precomputed
-    compact HA sensor so one wake = one small fetch.
+    compact HA sensor so one wake = one small fetch. **Superseded by #29.**
 18. **2026-11-16 — Per-circuit current: INA228 + shunts on I²C**
     (Dan's choice). Accurate at fan/LED currents; up to 16 addresses per bus.
 19. **2026-11-16 — USB GPS via gpsd** container; gps_logger is a gpsd
@@ -365,3 +368,16 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     gpsd's default probing makes the RFCOMM link return I/O errors. The MAC
     lives only in `deploy/.env`. gpsd listens on localhost; how bigair's
     container reaches it is decided in #14.
+29. **2026-11-19 — Dash display: eink-screen firmware + server-rendered
+    frame** (Dan's choice; supersedes #17). The board is a **LilyGo T5 ePaper
+    S3 PRO** (ESP32-S3, 4.7" 960×540 16-grey parallel e-paper, touch, LoRa,
+    GPS), not a 2.13" panel, and ESPHome can't drive it. Dan's
+    `~/src/eink-screen` firmware (PlatformIO, epdiy V7 driver) already does,
+    as a thin client of HelmLog's `/api/display.raw`. BigAir serves the same
+    contract (`bigair display`, port 8090: 259,200-byte 4-bit frame, Bearer
+    key, refresh headers, `?screen=` ignored), so **one unit works on the boat
+    and in the van**: the firmware locks onto whichever server answers on the
+    network it joins. Layout lives in `display_render.py`, so restyling never
+    needs a reflash. Hard-won board rules (epdiy not LilyGo-EPD47, never
+    `Wire.begin()`, always pass `--upload-port`) live in eink-screen's
+    `AGENTS.md`. The ESPHome display config is deleted.

@@ -220,6 +220,21 @@ start_grafana() {
   die "Grafana did not start — check: ${COMPOSE[*]} logs grafana"
 }
 
+start_display() {
+  log "Dash display server (Decision #29)"
+  if [[ -z "$(env_get DISPLAY_API_KEY)" ]]; then
+    echo "DISPLAY_API_KEY not set in deploy/.env — skipping (see deploy/.env.example)."
+    return
+  fi
+  "${COMPOSE[@]}" up -d --build display
+  echo -n "Waiting for the display server"
+  for _ in $(seq 1 60); do
+    if curl -sf http://localhost:8090/health >/dev/null; then echo " ok"; return; fi
+    echo -n "."; sleep 2
+  done
+  die "display server did not start — check: ${COMPOSE[*]} logs display"
+}
+
 health() {
   log "Health checks"
   local ok=1 pass
@@ -238,6 +253,17 @@ health() {
       warn "datasource $ds failed its health check"; ok=0
     fi
   done
+
+  if [[ -n "$(env_get DISPLAY_API_KEY)" ]]; then
+    local bytes  # the firmware only accepts a full 259200-byte frame
+    bytes="$(curl -sf -H "Authorization: Bearer $(env_get DISPLAY_API_KEY)" \
+      http://localhost:8090/api/display.raw | wc -c | tr -d ' ' || true)"
+    if [[ "$bytes" == "259200" ]]; then
+      echo "Dash display frame: OK (259200 bytes)"
+    else
+      warn "dash display frame wrong size (${bytes:-none} bytes)"; ok=0
+    fi
+  fi
 
   # shellcheck disable=SC2016  # $SYS is a literal MQTT topic, not a variable
   if "${COMPOSE[@]}" exec -T mosquitto mosquitto_sub -t '$SYS/broker/version' -C 1 -W 5 >/dev/null; then
@@ -282,4 +308,5 @@ gps_host
 start_core
 provision_influx
 start_grafana
+start_display
 health
