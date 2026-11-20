@@ -32,6 +32,21 @@ are Critical tier.
   time, or the historical fill's time), so re-running an import overwrites
   points instead of duplicating them.
 
+## The writer (`influx_io.py`)
+
+- `Point` → `to_line()`: tags sorted, fields in mapper order, `None`/NaN/inf
+  fields dropped, floats in full precision without exponents, ints with
+  `i`, millisecond timestamps, naive datetimes rejected.
+- Bucket routing by measurement: `track`, `fill_up`, `trip` →
+  `van_history`; everything else → `van_raw`.
+- One mapper per measurement (`track_point`, `vehicle_point`, `fuel_point`,
+  …). `test_mappers_only_write_fields_in_the_data_model` parses the
+  CLAUDE.md table, so a mapper can't write a field the table doesn't list.
+- `InfluxWriter` is stdlib-only. It buffers up to 50k lines and drops the
+  oldest when full (counted in `dropped`). A failed bucket stays buffered.
+  It writes nothing while `clock_ok()` is false (Decision #24; #22 supplies
+  the chrony check).
+
 ## Querying: InfluxQL, not Flux
 
 Create DBRP mappings once per bucket during provisioning (M1 deploy task):
