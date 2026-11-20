@@ -25,6 +25,11 @@ MUST_BE_IGNORED = [
     "homeassistant/deps/x",
     "homeassistant/tts/x",
     "homeassistant/.cloud/x",
+    # Seen on the first real Pi run (2026-11-19):
+    "homeassistant/.ha_run.lock",
+    "homeassistant/blueprints/automation/homeassistant/motion_light.yaml",
+    "homeassistant/www/x",
+    "homeassistant/home-assistant.log.fault",
     "esphome/secrets.yaml",
     "deploy/.env",
     "deploy/volumes/influxdb/x",
