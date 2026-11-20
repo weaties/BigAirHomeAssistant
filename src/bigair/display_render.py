@@ -149,6 +149,19 @@ def _sparkline(
     draw.line(pts, fill=BLACK, width=5, joint="curve")
 
 
+def status_text(state: GaugeState, now: datetime, tz: str) -> str:
+    """Footer status: no data, stale, or live (with the calibrating disclosure)."""
+    if state.updated is None or state.tank_gal is None:
+        return "NO FUEL DATA"
+    if state.stale:
+        return "STALE: NO ENGINE DATA"  # service alive, but samples stopped while moving
+    if is_stale(state, now):
+        return f"STALE since {_local(state.updated, tz)}"  # feed stopped: service down
+    if state.calibrating:
+        return "LIVE · CALIBRATING"  # 5E not yet verified against the pump (Decision #32)
+    return "LIVE"
+
+
 def render_gauge(
     state: GaugeState,
     now: datetime,
@@ -205,14 +218,7 @@ def render_gauge(
     # Footer: local clock + status.
     draw.line([(0, 495), (WIDTH, 495)], fill=GREY, width=2)
     draw.text((40, 502), _local(now, tz), font=_font(32), fill=BLACK)
-    if state.updated is None:
-        status = "NO FUEL DATA"
-    elif stale:
-        status = f"STALE since {_local(state.updated, tz)}"
-    elif state.calibrating:
-        status = "LIVE · CALIBRATING"  # 5E not yet verified against the pump
-    else:
-        status = "LIVE"
+    status = status_text(state, now, tz)
     draw.text(
         (WIDTH - 40 - draw.textlength(status, font=_font(32)), 502),
         status,

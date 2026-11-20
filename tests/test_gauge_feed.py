@@ -94,3 +94,23 @@ def test_reader_falls_back_to_no_data(tmp_path: Path) -> None:
     assert read() == GaugeState(tank_gal=None, range_mi=None)
     write_state(path, {"ts": "2026-11-20T18:00:00Z", "tank_gal": 40.0, "range_mi": 600.0})
     assert read().tank_gal == 40.0
+
+
+def test_no_tank_yet_says_no_fuel_data_not_stale() -> None:
+    from bigair.display_render import status_text
+
+    state = GaugeState(tank_gal=None, range_mi=None, updated=T0, calibrating=True)
+    assert status_text(state, T0, "UTC") == "NO FUEL DATA"
+
+
+def test_status_texts() -> None:
+    from bigair.display_render import status_text
+
+    live = GaugeState(tank_gal=40.0, range_mi=600.0, updated=T0)
+    assert status_text(live, T0, "UTC") == "LIVE"
+    cal = GaugeState(tank_gal=40.0, range_mi=600.0, updated=T0, calibrating=True)
+    assert status_text(cal, T0, "UTC") == "LIVE · CALIBRATING"
+    stale = GaugeState(tank_gal=40.0, range_mi=600.0, updated=T0, stale=True)
+    assert status_text(stale, T0, "UTC") == "STALE: NO ENGINE DATA"
+    down = GaugeState(tank_gal=40.0, range_mi=600.0, updated=T0)
+    assert status_text(down, T0 + timedelta(minutes=6), "UTC") == "STALE since 18:00"
