@@ -22,6 +22,7 @@ DISCOVERY_PREFIX = "homeassistant"
 NODE_ID = "bigair"
 AVAILABILITY_TOPIC = "bigair/status"  # LWT: bigair sets the will to OFFLINE, retained
 FUEL_STATE_TOPIC = "bigair/fuel/state"  # retained JSON; display copy only (Decision #22)
+MANUAL_FILL_TOPIC = "bigair/fill_up/manual"  # HA button → bigair ("full")
 ONLINE = "online"
 OFFLINE = "offline"
 
@@ -108,6 +109,34 @@ def _stale_config() -> dict[str, object]:
     }
 
 
+def _calibrating_config() -> dict[str, object]:
+    return {
+        "name": "Fuel rate calibrating",
+        "object_id": "fuel_calibrating",
+        "unique_id": "bigair_fuel_calibrating",
+        "state_topic": FUEL_STATE_TOPIC,
+        "value_template": "{{ 'ON' if value_json.calibrating else 'OFF' }}",
+        "icon": "mdi:scale-balance",
+        "device": DEVICE,
+        "availability": [_ONLINE],
+        "availability_mode": "all",
+    }
+
+
+def _filled_to_full_config() -> dict[str, object]:
+    return {
+        "name": "Filled to full",
+        "object_id": "filled_to_full",
+        "unique_id": "bigair_filled_to_full",
+        "command_topic": MANUAL_FILL_TOPIC,
+        "payload_press": "full",
+        "icon": "mdi:gas-station",
+        "device": DEVICE,
+        "availability": [_ONLINE],
+        "availability_mode": "all",
+    }
+
+
 def discovery_messages() -> list[tuple[str, str]]:
     """Retained discovery configs: (topic, JSON payload)."""
     out = [
@@ -123,6 +152,18 @@ def discovery_messages() -> list[tuple[str, str]]:
             json.dumps(_stale_config(), sort_keys=True),
         )
     )
+    out.append(
+        (
+            f"{DISCOVERY_PREFIX}/binary_sensor/{NODE_ID}/fuel_calibrating/config",
+            json.dumps(_calibrating_config(), sort_keys=True),
+        )
+    )
+    out.append(
+        (
+            f"{DISCOVERY_PREFIX}/button/{NODE_ID}/filled_to_full/config",
+            json.dumps(_filled_to_full_config(), sort_keys=True),
+        )
+    )
     return out
 
 
@@ -134,6 +175,8 @@ def fuel_state_payload(
     mpg_instant_30s: float | None,
     mpg_since_full: float | None,
     stale: bool,
+    *,
+    calibrating: bool = False,
 ) -> str:
     """The retained JSON on FUEL_STATE_TOPIC (keys match the sensor object_ids)."""
     values = {
@@ -148,4 +191,5 @@ def fuel_state_payload(
     }
     payload["ts"] = ts.isoformat()
     payload["stale"] = stale
+    payload["calibrating"] = calibrating  # 5E not yet VERIFIED (Decision #32)
     return json.dumps(payload, sort_keys=True)

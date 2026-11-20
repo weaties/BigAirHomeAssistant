@@ -282,6 +282,17 @@ start_display() {
   die "display server did not start — check: ${COMPOSE[*]} logs display"
 }
 
+start_bigair() {
+  log "Fuel service (#53)"
+  mkdir -p "$REPO/data/bigair"
+  "${COMPOSE[@]}" up -d --build bigair
+  sleep 5
+  if [[ "$(docker inspect -f '{{.State.Running}}' bigair-bigair-1 2>/dev/null)" != "true" ]]; then
+    die "fuel service is not running — check: ${COMPOSE[*]} logs bigair"
+  fi
+  echo "running (tank starts unknown until 'Filled to full' is pressed in Home Assistant)"
+}
+
 health() {
   log "Health checks"
   local ok=1 pass
@@ -367,4 +378,5 @@ start_core
 provision_influx
 start_grafana
 start_display
+start_bigair
 health
