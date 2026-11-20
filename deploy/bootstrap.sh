@@ -157,6 +157,14 @@ gps_host() {
     echo "GPS config unchanged."
   fi
   echo "rfcomm-gps: $(systemctl is-active rfcomm-gps.service)  gpsd: $(systemctl is-active gpsd.service)"
+
+  # System time from GPS (Decision #24, #22): chrony reads gpsd's SHM 0 segment.
+  if install_if_changed "$DEPLOY/host/chrony-gps.conf" /etc/chrony/conf.d/bigair-gps.conf; then
+    sudo systemctl restart chrony
+    echo "chrony GPS refclock installed — chrony restarted."
+  else
+    echo "chrony GPS refclock unchanged."
+  fi
 }
 
 start_core() {
@@ -255,6 +263,14 @@ health() {
       2) echo "GPS: 2D fix (weak sky view?)" ;;
       *) warn "GPS: no fix from gpsd (mode='${mode:-none}'). Receiver on? See docs/hardware/gps-xgps160-trial.md"; ok=0 ;;
     esac
+    local reach ref
+    reach="$(chronyc -n sources 2>/dev/null | awk '$2 == "GPS" {print $4}')"
+    ref="$(chronyc -n tracking 2>/dev/null | sed -n 's/^Reference ID *: //p')"
+    if [[ -n "$reach" && "$reach" != "0" ]]; then
+      echo "chrony: GPS refclock receiving (reach $reach); clock reference: $ref"
+    else
+      warn "chrony: GPS refclock not receiving yet (reach '${reach:-missing}'); check 'chronyc sources' in a minute"
+    fi
   fi
 
   echo -n "Home Assistant (first start can take a few minutes)"
