@@ -73,8 +73,10 @@ services:
       DISPLAY_FULL_REFRESH_SECONDS: ${DISPLAY_FULL_REFRESH_SECONDS:-600}
       # Drive testing: set to /run/bigair/debug.json to show Pi supply and van voltage.
       DISPLAY_DEBUG_FILE: ${DISPLAY_DEBUG_FILE:-}
+      DISPLAY_GAUGE_FILE: /feed/gauge.json  # written by the bigair service (#17)
     volumes:
       - /run/bigair:/run/bigair:ro  # written by deploy/host/bigair-debug.service
+      - gauge-feed:/feed:ro
     healthcheck:
       test:
         - CMD
@@ -99,6 +101,11 @@ services:
       MQTT_HOST: mosquitto
       INFLUX_URL: http://influxdb:8086
       BIGAIR_STATE_FILE: /data/fuel_state.json
+      BIGAIR_GAUGE_FILE: /feed/gauge.json
     volumes:
       - ../data/bigair:/data  # durable fuel state (Decision #22); gitignored
+      - gauge-feed:/feed  # dash display copy (#17), not durable
     stop_grace_period: 15s  # time to save state on SIGTERM
+
+volumes:
+  gauge-feed:  # bigair service → dash display (#17)

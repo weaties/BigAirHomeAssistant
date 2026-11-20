@@ -84,3 +84,18 @@ and readable, the trip sparkline is replaced by a power status line:
 `PI 5.01V OK | VAN 14.2V | UP 12m`. Data older than 30 s is prefixed
 `DEBUG STALE`. A missing or garbled file just means no strip. Setup steps are
 in `docs/hardware/pi-setup.md`.
+
+## Live data: the gauge feed (#17)
+
+`bigair run` writes `/feed/gauge.json` every 5 s (Compose volume `gauge-feed`,
+not fsynced, display copy only). It holds `ts` (when the service wrote it),
+`tank_gal`, `range_mi`, `capacity_gal`, `stale`, `calibrating` and
+`mpg_spark` (current-trip buckets, every 2 mi of measured driving; a new trip
+starts after a 30 min park). `bigair display` reads it on every frame
+(`DISPLAY_GAUGE_FILE`).
+
+The gauge is stale (numbers struck through) if the service says so (moving
+with no data) **or** the feed is more than 5 min old (service down). Parked
+with the engine off is *not* stale, because the tank is still right then.
+While `5E` is unverified, the footer reads `LIVE · CALIBRATING` (Decision #32).
+The debug strip, when on, takes the sparkline's place.
