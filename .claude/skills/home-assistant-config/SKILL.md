@@ -15,7 +15,7 @@ logic. Templates may format values, never compute them.
 homeassistant/
   configuration.yaml        # minimal: default_config, homeassistant: packages: !include_dir_named packages
   packages/
-    mqtt_backbone.yaml      # mqtt_statestream (HA-only devices → MQTT)
+    mqtt_backbone.yaml      # M3, not present yet: mqtt_statestream for Victron BLE
     fill_up.yaml            # helpers, form script, notification automations (M1)
   secrets.yaml.example      # committed; the real secrets.yaml is gitignored
 ```
@@ -43,6 +43,17 @@ unit-converted sensors.
 
 Victron BLE (`/electrical`) and any HA integration bigair can't reach
 directly: list their entities in `mqtt_statestream` (`include.entities`).
+
+Two gotchas (both hit on the first Pi bring-up, 2026-11-19):
+
+- **An empty include list publishes every entity.** HA's entity filter treats
+  "nothing included" as "include all". `tests/test_ha_config.py` fails on a
+  statestream block without a non-empty include list. Don't add the package
+  until there's a real entity to forward.
+- **It needs the MQTT integration to exist at startup.** MQTT is configured
+  in the UI, so on a fresh install HA starts before MQTT exists, and
+  statestream fails with "MQTT integration is not available". After adding
+  MQTT (or the package), restart HA.
 bigair subscribes and records them. This keeps the single-Influx-writer
 rule.
 

@@ -333,3 +333,9 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     the web UIs) via the idempotent `deploy/bootstrap.sh`, which also does the
     InfluxDB bucket, DBRP and token provisioning from issue #6. The bootstrap
     never touches networking while the van Wi-Fi is undecided.
+26. **2026-11-19 — No `mqtt_statestream` until there's an entity to forward.**
+    The M0 placeholder had an empty include list, which HA treats as "publish
+    every entity" (checked against HA 2026.11 on the Pi). It also failed at
+    first boot, because the MQTT integration is added in the UI after HA
+    starts. Removed; it returns in M3 with the Victron entity list.
+    `tests/test_ha_config.py` blocks an empty include.
