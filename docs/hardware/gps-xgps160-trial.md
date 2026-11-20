@@ -5,9 +5,9 @@ it can be the van's GPS (track points every 5 s) and clock source (chrony via
 gpsd, CLAUDE.md Decision #24 and issue #22).
 
 **Status (2026-11-19): adopted** (CLAUDE.md Decision #28). Steps 1–4 and
-robustness test 5b passed on the Pi; results are in
-`docs/scans/2026-11-19-xgps160-trial.md`. Test 5a (Pi reboot) runs with the
-permanent setup from step 6. Tests 5d–f are still open.
+robustness tests 5a (Pi reboot) and 5b (receiver power cycle) passed on the
+Pi; results are in `docs/scans/2026-11-19-xgps160-trial.md`. Tests 5d–f are
+still open.
 
 ## What we know going in
 
