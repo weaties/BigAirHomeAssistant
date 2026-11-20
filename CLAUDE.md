@@ -339,3 +339,11 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     first boot, because the MQTT integration is added in the UI after HA
     starts. Removed; it returns in M3 with the Victron entity list.
     `tests/test_ha_config.py` blocks an empty include.
+27. **2026-11-19 — Explicit HA integrations, no `default_config`** (Dan:
+    "delete things while we know we don't need them"). `default_config`
+    loaded network discovery, cloud, energy, voice and backup. On the first
+    bring-up that auto-added WeMo, Govee, Thread, Met, Sun, Shopping list and a
+    dozen ignored discoveries from the home network. `configuration.yaml` now
+    lists only frontend, history, logbook, mobile_app and system_health, and
+    every addition names the feature that needs it. Bluetooth comes back in M3
+    (Victron); leaving it out meanwhile frees the radio for the XGPS160 trial.
