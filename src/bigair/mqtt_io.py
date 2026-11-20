@@ -4,12 +4,14 @@ On every (re)connect: LWT `bigair/status` = offline (retained), publish
 online, the HA discovery configs (retained) and subscribe to commands. Then
 publish the fuel state every few seconds (retained, display copy only —
 Decision #22) and fill candidates as they come. Reconnects forever; the fuel
-model keeps integrating while the broker is away.
+model keeps integrating while the broker is away. On shutdown it publishes
+offline itself, because a clean disconnect never fires the will.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import TYPE_CHECKING
 
@@ -81,10 +83,19 @@ async def run_mqtt(
                         data = raw if isinstance(raw, bytes) else str(raw or "").encode()
                         on_command(str(message.topic), data)
 
-                async with asyncio.TaskGroup() as tg:
-                    tg.create_task(publisher())
-                    tg.create_task(candidate_sender())
-                    tg.create_task(commands())
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        tg.create_task(publisher())
+                        tg.create_task(candidate_sender())
+                        tg.create_task(commands())
+                except asyncio.CancelledError:
+                    # A clean disconnect never triggers the will, so say offline
+                    # ourselves or HA keeps showing the last values as current.
+                    with contextlib.suppress(aiomqtt.MqttError, TimeoutError):
+                        await asyncio.wait_for(
+                            client.publish(AVAILABILITY_TOPIC, OFFLINE, qos=1, retain=True), 2
+                        )
+                    raise
         except* aiomqtt.MqttError as eg:
             logger.warning("MQTT session ended: {}; retrying in {} s", eg.exceptions[0], retry_s)
         await asyncio.sleep(retry_s)
