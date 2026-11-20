@@ -7,7 +7,9 @@
 Description=Bind Bluetooth GPS (SPP) to /dev/rfcomm0
 After=bluetooth.service
 Requires=bluetooth.service
-Before=gpsd.service gpsd.socket
+# Not Before=gpsd.socket: sockets start before basic.target, which this unit
+# is ordered after, so that edge is a cycle and systemd drops this job at boot.
+Before=gpsd.service
 
 [Service]
 Type=oneshot
