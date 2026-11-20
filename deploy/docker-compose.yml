@@ -57,7 +57,32 @@ services:
   # gpsd runs on the Pi host, not here (CLAUDE.md Decision #28): the Bluetooth
   # RFCOMM binding and chrony's SHM refclock both live on the host.
 
+  display:
+    # Dash fuel gauge frames for the LilyGo T5 S3 PRO (eink-screen firmware), Decision #29.
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: bigair:local
+    restart: unless-stopped
+    command: ["uv", "run", "--no-sync", "bigair", "display", "--port", "8090"]
+    ports: ["8090:8090"]
+    environment:
+      TZ: ${TZ}
+      DISPLAY_API_KEY: ${DISPLAY_API_KEY}
+      DISPLAY_REFRESH_SECONDS: ${DISPLAY_REFRESH_SECONDS:-60}
+      DISPLAY_FULL_REFRESH_SECONDS: ${DISPLAY_FULL_REFRESH_SECONDS:-600}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   bigair:
+    image: bigair:local
     build:
       context: ..
       dockerfile: deploy/Dockerfile

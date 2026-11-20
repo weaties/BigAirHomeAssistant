@@ -1,78 +1,77 @@
 ---
 name: dash-display
-description: The ESPHome e-paper dash display that replaces the stock fuel gauge for the 47-gallon tank — current hardware (LilyGo e-paper + LoRa board, battery, deep sleep), the wake/fetch/render/sleep cycle, layout (fuel, range, mpg sparkline), stale-data and low-fuel states, and how to add a screen. TRIGGER when editing esphome/dash_display*.yaml, the mpg_trip_spark sensor, or display-related HA helpers. DO NOT trigger for other ESPHome nodes (W-Bus heater, INA228 loads) unless they share a common fragment.
+description: The dash fuel gauge — a LilyGo T5 ePaper S3 PRO running Dan's eink-screen firmware as a thin client of BigAir's display server (`bigair display`, port 8090). Covers the frame contract shared with HelmLog, the layout in display_render.py, the boat-and-van dual use, flashing gotchas, and how to change what's shown. TRIGGER when editing src/bigair/display_render.py or display_server.py, the display Compose service, DISPLAY_* settings, or when flashing or debugging the LilyGo. DO NOT trigger for Grafana or HA dashboards.
 ---
 
 # Dash display
 
 The stock gauge doesn't know about the 47-gal tank, and CarPlay can't show
-sensor values. This display is the in-cab fuel readout. It must work with
-**no CarPlay and no internet**, only the van's Wi-Fi and HA.
+sensors (`docs/carplay.md`). This is the in-cab fuel readout (CLAUDE.md
+Decision #29).
 
-## Hardware (v0)
-
-- **Dan's LilyGo T5-family e-paper board with LoRa**, already on hand. A
-  better device may replace it later. **Board and panel revision:
-  UNVERIFIED.** Read the silkscreen and the panel's FPC label before
-  choosing ESPHome's `waveshare_epaper` `model:`. ESPHome's tested 2.13"
-  TTGO models are `2.13in-ttgo`, `-b73`, `-b74`, `-b1` and `-dke`, and the
-  docs say to try `-b73` or `-b1` depending on revision.
-- Battery powered and wireless, with deep sleep between refreshes. LoRa is
-  unused in v0.
-- B/W e-paper has no colour. The low-fuel "warning colour" is rendered as
-  **inverted** (white on black) fuel figures with a heavy border. If a
-  red-capable panel replaces it later, use red.
-- Mounting: the 52 mm gauge pod fits a round display. This board is a
-  rectangle, so v0 mounts on the dash. That's a known compromise.
-
-## Cycle (one wake)
+## The pieces
 
 ```
-wake → Wi-Fi (static IP, fast connect) → HA native API → read sensors
-     → render → full or partial refresh → deep sleep
+LilyGo T5 ePaper S3 PRO ──GET /api/display.raw (Bearer key)──▶ bigair display (Pi :8090)
+  eink-screen firmware    ◀── 259200 bytes, 4-bit, 960×540 ───   display_render.py (Pillow)
+  (~/src/eink-screen)     ◀── X-Refresh-Seconds / X-Full-… ───   display_server.py (stdlib HTTP)
 ```
 
-- Read `sensor.tank_gal`, `sensor.range_mi`, `sensor.mpg_trip_spark`,
-  `binary_sensor.ignition` and bigair's availability. Each is a
-  `homeassistant` platform sensor.
-- **Sleep length:** about 60 s when ignition is on, about 15 min when off.
-  ESPHome `deep_sleep` with `run_duration` as a safety timeout (say 20 s) so
-  a failed connection can't drain the battery.
-- **OTA:** an HA `input_boolean.dash_display_stay_awake` blocks deep sleep
-  (`deep_sleep.prevent`) so firmware can be flashed.
-- e-paper `full_update_every` limits ghosting. Use a partial refresh for the
-  number and a full refresh about every 10th wake.
-- Alternative if API connects are too slow or power-hungry: retained MQTT
-  topics from bigair (ESPHome `mqtt` subscribe). Measure first, then decide
-  and log it.
+- **Device:** LilyGo **T5 ePaper S3 PRO**: ESP32-S3 (16 MB flash, 8 MB
+  PSRAM), 4.7" 960×540 16-grey **parallel** e-paper, GT911 touch, LoRa, GPS,
+  battery. Verified with esptool on 2026-11-19. ESPHome can't drive this
+  panel.
+- **Firmware:** `~/src/eink-screen`, a separate repo with its own
+  `AGENTS.md`. **Read its Gotchas before touching firmware.** Firmware
+  changes are only for transport, power, Wi-Fi or refresh behaviour, never
+  layout.
+- **Server:** `bigair display`, the `display` Compose service. It serves the
+  **same contract as HelmLog's** `/api/display.raw`, so one unit works on the
+  boat (HelmLog) and in the van (BigAir). The firmware tries its network list
+  in order and locks onto the first server that answers.
 
-## Layout (2.13"-class, landscape)
+## Contract (keep identical to HelmLog's)
 
+| Endpoint | Behaviour |
+|---|---|
+| `GET /api/display.raw` | Bearer key → exactly **259,200 bytes**. Top nibble per pixel, even-x pixel = low nibble, rows in order, 0x0 black, 0xF white. Headers `X-Refresh-Seconds`, `X-Full-Refresh-Seconds`, `Cache-Control: no-store`. |
+| `?screen=<id>` | **Ignored, never 404.** The device remembers HelmLog's last screen (`numbers`), and a 404 would blank the van gauge. |
+| `?invert=1` | Polarity escape hatch |
+| `GET /api/display.png` | Preview, same key |
+| `/api/display/menu*` | Not offered (404). The firmware treats a failed tap as a no-op. |
+| `GET /health` | No key |
+
+The key: the firmware compiles in **one** Bearer key (`HELMLOG_API_KEY` in
+eink-screen's gitignored `include/config.h`) and sends it to every server.
+So `DISPLAY_API_KEY` in the Pi's `deploy/.env` must be that same value.
+Never print it or commit it.
+
+## Changing what's shown
+
+1. Edit `src/bigair/display_render.py`, test-first (`tests/test_display_render.py`).
+2. Preview locally: `uv run python -c "…render_gauge(…).save('x.png')"`, or on
+   the Pi with `curl -H "Authorization: Bearer $KEY" http://bigair-ha.local:8090/api/display.png -o x.png`.
+3. Deploy (`git pull && ./deploy/bootstrap.sh`, which rebuilds the display
+   image). The device picks it up on its next poll. **No reflash.**
+
+Rules: a stale or missing reading shows dashes or a strike-through plus
+`STALE since hh:mm` / `NO FUEL DATA`, never a confident old number. Low fuel
+is drawn inverted, because the B/W panel has no colour.
+
+## Data source
+
+Until the fuel model exists (M1), `bigair display` serves the no-data state.
+Issue #17 wires it to the fuel model's state on MQTT: tank, range, trip-mpg
+buckets and timestamp.
+
+## Flashing (summary; full runbook in eink-screen's `/flash` skill)
+
+```bash
+cd ~/src/eink-screen
+pio run -t upload --upload-port /dev/cu.usbmodem2101   # ALWAYS pass the port
 ```
-┌──────────────────────────────────────┐
-│ 31.4 gal            ▕██████████▏ 67% │
-│ 468 mi range                         │
-│ ▁▂▃▅▅▆▅▃▄▅▆▆  trip 15.2 mpg           │
-│ 14:32                       ● fresh  │
-└──────────────────────────────────────┘
-```
 
-- **Sparkline:** `sensor.mpg_trip_spark` is a compact string bigair builds.
-  It holds up to 32 comma-separated `mpg_30s` buckets for the current trip,
-  well under the 255-char state limit. One small fetch, no history API call,
-  no parsing beyond `split(',')` in a lambda.
-- **Stale:** if a reading is older than 5 min, unavailable, or bigair is
-  offline → draw the numbers struck through, with "STALE since hh:mm". Never
-  show an old number as if it were current.
-- **Low fuel:** `tank_gal` < a configurable threshold (default 8 gal) →
-  inverted block.
-
-## Adding a screen
-
-1. Add a `page` to the display's `pages:` list, or a new lambda behind a
-   `globals` page index.
-2. Add any new data as an HA sensor, published by bigair via MQTT discovery.
-   Keep it one compact state, not attributes, to keep wake time short.
-3. Step pages with the board's button as a wakeup source (`wakeup_pin`).
-4. Validate: `uvx esphome config esphome/dash_display.yaml`, and add a
-   render screenshot to the PR.
+- The native USB port drops after a reset. Recover with BOOT held + tap RST,
+  or a replug.
+- Serial capture: a reconnecting pyserial reader. Don't toggle DTR/RTS.
+- A healthy boot shows `[epd] 960x540`, `[wifi] … joined`, `[http] frame ok`.

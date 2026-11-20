@@ -76,4 +76,4 @@ DIDs as hints for what to look for, never as values to copy.
 | Webasto | W-Bus pump pulse volume | datasheet / bench | UNVERIFIED | — | `/heater-accounting` |
 | Victron BMV-700 | VE.Direct fields | VE.Direct | UNVERIFIED | — | `/electrical` |
 | Victron MPPT, DC-DC, shore charger | model, ports, BLE instant readout | label / VictronConnect | UNVERIFIED | — | |
-| Dash display | LilyGo board and panel revision | silkscreen | UNVERIFIED | — | Decides the ESPHome `model:` |
+| Dash display | LilyGo T5 ePaper S3 PRO: ESP32-S3 rev v0.2, 16 MB flash, 8 MB PSRAM, 960×540 parallel e-paper | esptool `flash_id`, boot log | VERIFIED | esptool + eink-screen boot log, 2026-11-19 | Runs the eink-screen firmware (epdiy V7), Decision #29 |

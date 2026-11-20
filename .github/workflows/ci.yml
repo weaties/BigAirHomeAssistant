@@ -80,15 +80,7 @@ jobs:
         run: uv sync
 
       - name: yamllint
-        run: uv run yamllint homeassistant esphome grafana deploy .github
-
-      - name: ESPHome config validation
-        run: |
-          cp esphome/secrets.yaml.example esphome/secrets.yaml
-          for f in esphome/*.yaml; do
-            case "$f" in *secrets*) continue ;; esac
-            uvx esphome config "$f"
-          done
+        run: uv run yamllint homeassistant grafana deploy .github
 
       - name: shellcheck
         run: uvx --from shellcheck-py shellcheck -x deploy/*.sh
