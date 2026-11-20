@@ -337,7 +337,9 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     (tracked in issue #22). Implemented 2026-11-19 with
     `deploy/host/chrony-gps.conf` (SHM 0, `offset 0.095` measured for the XGPS160
     over Bluetooth, loose precision so NTP wins online). Offline failover to GPS
-    verified. bigair's write guard lands with the services in M1.
+    verified. bigair's write guard (`clock.py`, 2026-11-21) reads the kernel's
+    sync status via `adjtimex`, which chrony maintains; it works in the container
+    without privileges. InfluxDB writes are buffered until it reports synced.
 25. **2026-11-19 — Bring-up on an SD card; SSD before the van install**
     (Dan's choice). Amends #6 for the bench phase only. Docker log rotation
     (10 MB × 3) limits SD wear in the meantime. Setup is headless (SSH, plus
