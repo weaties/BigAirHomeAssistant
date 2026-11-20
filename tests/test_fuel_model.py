@@ -126,3 +126,116 @@ def test_tank_before_fill_matches_the_synthetic_drive(drive: Drive) -> None:
     assert m.tank_gal == pytest.approx(exp["pre_fill"]["tank_gal"], abs=0.01)
     assert m.state.gap_gal == 0.0
     assert not m.state.stale
+
+
+# --- #8: rolling mpg, range, instant mpg -------------------------------------
+
+
+def _cruise(start_s: int, seconds: int, mph: float, gph: float) -> list[ObdSample]:
+    return [_s(start_s + i, gph, mph=mph) for i in range(seconds + 1)]
+
+
+def _drive(m: FuelModel, miles: float, mpg: float, start_s: int = 0, mph: float = 60.0) -> int:
+    """Cruise `miles` at `mpg`; return the time of the last sample."""
+    seconds = round(miles / mph * 3600)
+    _feed(m, _cruise(start_s, seconds, mph, mph / mpg))
+    return start_s + seconds
+
+
+def test_rolling_mpg_uses_the_prior_below_the_minimum_history() -> None:
+    m = _model(prior_mpg=17.0)
+    _drive(m, 40.0, 10.0)  # 40 mi < 50 mi minimum
+    assert m.mpg_rolling == pytest.approx(17.0)
+
+
+def test_rolling_mpg_with_no_history_is_the_prior() -> None:
+    assert _model(prior_mpg=17.0).mpg_rolling == pytest.approx(17.0)
+
+
+def test_rolling_mpg_is_distance_over_fuel_once_history_is_enough() -> None:
+    m = _model(prior_mpg=17.0)
+    _drive(m, 60.0, 12.0)
+    assert m.mpg_rolling == pytest.approx(12.0, rel=1e-3)
+
+
+def test_rolling_window_keeps_only_the_most_recent_150_miles() -> None:
+    m = _model()
+    t = _drive(m, 150.0, 10.0)
+    _drive(m, 150.0, 20.0, start_s=t + 1)
+    # Window granularity is 1 mi, so at most ~1 mi of the old 10 mpg leg remains.
+    assert m.mpg_rolling == pytest.approx(20.0, rel=0.01)
+
+
+def test_idle_fuel_counts_against_rolling_mpg() -> None:
+    """Idling burns fuel without miles; it belongs in the rolling window."""
+    m = _model()
+    t = _drive(m, 60.0, 12.0)  # 5 gal
+    _feed(m, _cruise(t + 1, 3600, 0.0, 1.0))  # 1 gal idling, 0 mi
+    assert m.mpg_rolling == pytest.approx(60.0 / 6.0, rel=1e-3)
+
+
+def test_gap_estimates_are_excluded_from_rolling_mpg() -> None:
+    m = _model(prior_mpg=15.0)
+    t = _drive(m, 60.0, 12.0)
+    _feed(m, [_s(t + 600, 5.0, mph=60.0)])  # 10-minute gap: 10 mi estimated
+    assert m.state.gap_gal > 0
+    assert m.mpg_rolling == pytest.approx(12.0, rel=1e-3)
+
+
+def test_gaps_are_estimated_with_rolling_mpg_once_available() -> None:
+    m = _model(prior_mpg=15.0)
+    t = _drive(m, 60.0, 12.0)
+    _feed(m, [_s(t + 60, 5.0, mph=60.0)])  # 60 s at 60 mph = 1 mi
+    assert m.state.gap_gal == pytest.approx(1 / 12.0, rel=1e-3)
+
+
+def test_range_is_tank_times_rolling_mpg() -> None:
+    m = _model(prior_mpg=15.0)
+    assert m.range_mi == pytest.approx(47.0 * 15.0)
+
+
+def test_range_never_goes_negative() -> None:
+    state = FuelState(
+        ts=T0,
+        gal_after_last_fill=5.0,
+        engine_used_gal=6.0,
+        heater_used_gal=0.0,
+        last_fill_type=FillType.PARTIAL,
+    )
+    assert FuelModel(FuelModelConfig(), state).range_mi == 0.0
+
+
+def test_instant_mpg_on_a_steady_cruise() -> None:
+    m = _model()
+    _feed(m, _cruise(0, 120, 60.0, 4.0))
+    assert m.mpg_instant_30s == pytest.approx(15.0, rel=1e-9)
+
+
+def test_instant_mpg_only_looks_at_the_last_30_seconds() -> None:
+    m = _model()
+    _feed(m, _cruise(0, 120, 60.0, 6.0))  # 10 mpg
+    _feed(m, _cruise(121, 60, 60.0, 3.0))  # 20 mpg for the last minute
+    assert m.mpg_instant_30s == pytest.approx(20.0, rel=1e-9)
+
+
+def test_instant_mpg_is_none_when_barely_moving() -> None:
+    m = _model()
+    _feed(m, _cruise(0, 60, 5.0, 0.6))  # 30 s at 5 mph = 0.042 mi < 0.05
+    assert m.mpg_instant_30s is None
+
+
+def test_instant_mpg_is_none_with_no_samples() -> None:
+    assert _model().mpg_instant_30s is None
+
+
+def test_instant_mpg_is_capped_on_overrun_fuel_cut() -> None:
+    m = _model()
+    _feed(m, _cruise(0, 60, 50.0, 0.0))  # coasting downhill, injectors off
+    assert m.mpg_instant_30s == pytest.approx(50.0)
+
+
+def test_instant_mpg_window_follows_the_clock_after_ignition_off() -> None:
+    m = _model()
+    _feed(m, _cruise(0, 60, 60.0, 4.0))
+    _feed(m, [_s(61 + i, None, mph=0.0, ignition=False) for i in range(40)])
+    assert m.mpg_instant_30s is None

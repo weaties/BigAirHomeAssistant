@@ -58,8 +58,9 @@ belong in one constants block, never as magic numbers.
   move the integration baseline, so the next valid sample is integrated
   normally if it's within 5 s, or treated as a gap if not. Stale after 60 s
   without a valid rate.
-- Until #8 lands, gaps are estimated with the configured prior mpg instead
-  of `mpg_rolling`.
+- Gap estimates stay out of the mpg windows (rolling and instant), so an
+  estimate never feeds back into the mpg it was made with. They still count
+  in `engine_used_gal`.
 - State (`gal_after_last_fill`, `engine_used_gal`, `heater_used_gal`, last
   fill metadata) goes to a local state file with an atomic write (temp file,
   `fsync`, rename): at least every 10 s while driving and immediately on every
@@ -77,6 +78,9 @@ belong in one constants block, never as magic numbers.
   driving**, a distance window that does **not** reset at fills. Below 50 mi
   of history (fresh install), use the latest full-to-full mpg, else a
   configured prior. Heater fuel is excluded because it doesn't move the van.
+  Idle fuel is included (it's engine fuel spent on the trip). The window is
+  kept as 1 mi chunks with the oldest one pro-rated. Distance is integrated
+  from `speed_mph` until #23 picks the distance source.
 - **`mpg_since_full`** (true mpg, on a full fill only): miles since the
   previous full fill ÷ Σ pump gallons of every fill in that interval,
   partials included. It's written on the `fill_up` point.
