@@ -90,6 +90,9 @@ jobs:
             uvx esphome config "$f"
           done
 
+      - name: shellcheck
+        run: uvx --from shellcheck-py shellcheck -x deploy/*.sh
+
       - name: Docker Compose config validation
         run: |
           cp deploy/.env.example deploy/.env
