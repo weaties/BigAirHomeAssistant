@@ -138,6 +138,16 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default(size=size)
 
 
+def fit_font(
+    draw: ImageDraw.ImageDraw, text: str, *, max_width: float, start: int, smallest: int = 20
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Largest font from `start` down whose rendering of `text` fits `max_width`."""
+    size = start
+    while size > smallest and draw.textlength(text, font=_font(size)) > max_width:
+        size -= 2
+    return _font(size)
+
+
 def _local(ts: datetime, tz: str) -> str:
     return ts.astimezone(ZoneInfo(tz)).strftime("%H:%M")
 
@@ -221,7 +231,9 @@ def render_gauge(
     else:
         # Drive-testing mode: the debug strip takes the sparkline's place.
         draw.rectangle((20, 375, WIDTH - 20, 485), outline=BLACK, width=3)
-        draw.text((40, 395), debug_text(debug, now), font=_font(40), fill=BLACK)
+        line = debug_text(debug, now)
+        font = fit_font(draw, line, max_width=WIDTH - 80, start=40)
+        draw.text((40, 395), line, font=font, fill=BLACK)
         draw.text((40, 445), f"debug @ {_local(debug.updated, tz)}", font=_font(28), fill=GREY)
 
     # Footer: local clock + status.
