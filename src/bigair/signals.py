@@ -100,3 +100,4 @@ class FuelState:
     heater_used_gal: float
     last_fill_type: FillType
     stale: bool = False
+    gap_gal: float = 0.0  # share of engine_used_gal estimated across data gaps

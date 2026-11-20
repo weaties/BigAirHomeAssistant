@@ -54,6 +54,12 @@ belong in one constants block, never as magic numbers.
   is visible.
 - Ignition off → engine rate 0. Heater fuel continues (`/heater-accounting`).
 - Negative or absurd rates (> 40 gph) → drop the sample and log a warning.
+- A sample with the ignition on but **no** rate (ECU didn't answer) doesn't
+  move the integration baseline, so the next valid sample is integrated
+  normally if it's within 5 s, or treated as a gap if not. Stale after 60 s
+  without a valid rate.
+- Until #8 lands, gaps are estimated with the configured prior mpg instead
+  of `mpg_rolling`.
 - State (`gal_after_last_fill`, `engine_used_gal`, `heater_used_gal`, last
   fill metadata) goes to a local state file with an atomic write (temp file,
   `fsync`, rename): at least every 10 s while driving and immediately on every
