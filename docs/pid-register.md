@@ -21,29 +21,32 @@ they can contain the VIN.
 
 ## Standard OBD-II PIDs (mode 01, SAE J1979)
 
-The formulas are the published SAE J1979 definitions. Whether the OM642 ECU
-answers them, and whether the values are sane, is **not known yet**.
+The formulas are the published SAE J1979 definitions. The first scan
+(2026-11-20) shows which ones the engine ECU answers; none is VERIFIED yet.
 
 | Signal | Field | PID | Formula (SAE) | Status | Evidence | Notes |
 |---|---|---|---|---|---|---|
-| Supported PIDs 01–20 / 21–40 / 41–60 / 61–80 | — | `00` `20` `40` `60` | bitmap | UNVERIFIED | — | Read these first. They decide most of the rows below. |
-| Engine load | `engine.engine_load_pct` | `04` | A·100/255 | UNVERIFIED | — | |
-| Coolant temp | `engine.coolant_temp_c` | `05` | A − 40 | UNVERIFIED | — | History dashboard #2 |
-| Intake MAP (boost) | `engine.boost_kpa` | `0B` | A kPa (absolute) | UNVERIFIED | — | Boost = MAP − baro (`33`) |
-| RPM | `engine.rpm` | `0C` | (256A+B)/4 | UNVERIFIED | — | |
-| Vehicle speed | `vehicle.speed_mph` | `0D` | A km/h → ×0.621371 | UNVERIFIED | — | Cross-check against GPS |
-| Intake air temp | `engine.intake_air_temp_c` | `0F` | A − 40 | UNVERIFIED | — | |
-| MAF | `engine.maf_g_s` | `10` | (256A+B)/100 g/s | UNVERIFIED | — | Fuel-rate fallback. #520 saw it on a 2006 EU W906. |
+| Supported PIDs 01–20 / 21–40 / 41–60 / 61–80 / 81–A0 | — | `00` `20` `40` `60` `80` | bitmap | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | Engine ECU `7E8` answers through `8B`; `7E9` and `7EC` answer small sets |
+| Engine load | `engine.engine_load_pct` | `04` | A·100/255 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 25 % at warm-up idle |
+| Coolant temp | `engine.coolant_temp_c` | `05` | A − 40 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 54 °C after 16 min idle. History dashboard #2 |
+| Intake MAP (boost) | `engine.boost_kpa` | `0B` | A kPa (absolute) | ABSENT | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | Bitmap bit clear; `NO DATA`. Look for an extended boost PID (`70`/`87` are in the `7E8` bitmap) or a DID |
+| RPM | `engine.rpm` | `0C` | (256A+B)/4 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 862 rpm at warm-up idle; compare with the tach |
+| Vehicle speed | `vehicle.speed_mph` | `0D` | A km/h → ×0.621371 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 0 parked. Verify against GPS at steady 30 and 60 mph |
+| Intake air temp | `engine.intake_air_temp_c` | `0F` | A − 40 | ABSENT | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | Bitmap bit clear. Extended IAT `68` is in the `7E8` bitmap |
+| MAF | `engine.maf_g_s` | `10` | (256A+B)/100 g/s | ABSENT | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | Bitmap bit clear. Extended MAF `66` responds instead (row below) |
+| MAF (extended, sensor A) | `engine.maf_g_s` | `66` | (256B+C)/32 g/s, A = sensor-support bits | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 23.8 g/s at warm-up idle |
 | Throttle position | `driver.throttle_pct` | `11` | A·100/255 | UNVERIFIED | — | On a diesel this may be the intake throttle valve, not the pedal. Prefer `49`. |
-| Run time since start | — | `1F` | 256A+B s | UNVERIFIED | — | Engine-hours helper |
-| O2 sensor 1, equivalence ratio | `engine.faer_ratio` | `24` | 2·(256A+B)/65536 | UNVERIFIED | — | Needed for the MAF×FAER fuel method. Seen in #520 (EU). |
-| Fuel tank level | — | `2F` | A·100/255 % | UNVERIFIED | — | Absent on #520's EU van. Even if present, it reads the stock sender, so it is not a 47-gal truth. |
-| Barometric pressure | — | `33` | A kPa | UNVERIFIED | — | |
-| Control module voltage | `vehicle.battery_v` | `42` | (256A+B)/1000 V | UNVERIFIED | — | History dashboard #3 |
-| Ambient air temp | — | `46` | A − 40 | UNVERIFIED | — | |
-| Accelerator pedal D | `driver.throttle_pct` | `49` | A·100/255 | UNVERIFIED | — | Preferred driver-throttle signal |
-| Engine fuel rate | `engine.fuel_rate_lph` | `5E` | (256A+B)/20 L/h | UNVERIFIED | — | **Primary fuel-model input if present.** Absent on #520's EU van. |
-| Odometer | `vehicle.odometer_mi` | `A6` | (A·2²⁴+B·2¹⁶+C·2⁸+D)/10 km | UNVERIFIED | — | Usually only on 2019+ ECUs. Fallback: integrate speed and correct at each fill from the dash reading. |
+| Run time since start | — | `1F` | 256A+B s | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 973 s, consistent with the WiCAN's wake time. Engine-hours helper |
+| O2 sensor 1, equivalence ratio | `engine.faer_ratio` | `24` | 2·(256A+B)/65536 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | Saturated (`FF FF` → 2.0) at idle: no use as FAER there. Moot while `5E` works |
+| Fuel tank level | — | `2F` | A·100/255 % | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 24.7 %. Stock sender moved to the 47-gal tank: delta detector for #10 only, through a learned table (Decision #31) |
+| Barometric pressure | — | `33` | A kPa | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 100 kPa |
+| Control module voltage | `vehicle.battery_v` | `42` | (256A+B)/1000 V | UNVERIFIED | — | In the `7E8` bitmap; not sampled yet. History dashboard #3 |
+| Ambient air temp | — | `46` | A − 40 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 6 °C on a cold morning |
+| Accelerator pedal D | `driver.throttle_pct` | `49` | A·100/255 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 5.1 % foot off. Preferred driver-throttle signal |
+| Engine fuel rate | `engine.fuel_rate_lph` | `5E` | (256A+B)/20 L/h | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | **Present on this van.** 1.55 L/h at warm-up idle. VERIFIED only after a full-to-full pump comparison within 5 % over ≥ 100 mi |
+| Fuel type | — | `51` | enum | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | `04` = diesel ✓ (matches the vehicle) |
+| Oil temp | — | `5C` | A − 40 | RESPONDS | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | 50 °C while warming |
+| Odometer | `vehicle.odometer_mi` | `A6` | (A·2²⁴+B·2¹⁶+C·2⁸+D)/10 km | ABSENT | [2026-11-20 scan](scans/2026-11-20-pid-bitmaps.md) | `80` bitmap's last bit clear: nothing above `A0`. Integrate speed and correct at each fill from the dash (#23) |
 
 ## Mercedes-specific UDS DIDs (mode 22) for OM642
 
