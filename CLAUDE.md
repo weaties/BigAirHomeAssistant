@@ -49,10 +49,10 @@ it is referenced, so the rule stands without the skill.
 ## Architecture
 
 ```
- OBD-II port                 USB on Pi              Bluetooth / VE.Direct      ESP32 nodes (ESPHome)
+ OBD-II port                 Bluetooth              Bluetooth / VE.Direct      ESP32 nodes (ESPHome)
  ┌──────────┐             ┌──────────┐            ┌──────────────────┐      ┌───────────────────────┐
- │ WiCAN    │             │ USB GPS  │            │ Victron BMV-700, │      │ W-Bus heater (Webasto)│
- │ (OBD/PRO)│             │ → gpsd   │            │ MPPT, DC-DC,     │      │ INA228 load sensors   │
+ │ WiCAN    │             │ BT GPS   │            │ Victron BMV-700, │      │ W-Bus heater (Webasto)│
+ │ (OBD/PRO)│             │ → gpsd*  │            │ MPPT, DC-DC,     │      │ INA228 load sensors   │
  └────┬─────┘             └────┬─────┘            │ shore charger    │      │ e-paper dash display ◄┼──┐
       │ MQTT                   │ TCP 2947         └───┬──────────────┘      └──────────┬────────────┘  │
       ▼                        ▼                      │ VE.Direct / HA BLE             │ MQTT / API     │
@@ -68,6 +68,8 @@ it is referenced, so the rule stands without the skill.
  │   InfluxDB 2.7  ◄── bigair is the only writer ──►  Grafana (provisioned dashboards, Geomap)     │
  └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+\* gpsd and chrony run on the Pi host, not in Docker (Decision #28).
 
 Principles:
 
@@ -106,7 +108,7 @@ Principles:
 | Dashboards | Grafana, provisioned from `grafana/provisioning/` |
 | Home automation | Home Assistant Container, YAML packages in `homeassistant/packages/` |
 | Embedded | ESPHome (`esphome/`) |
-| GPS | `gpsd` container on the USB GPS |
+| GPS | `gpsd` on the Pi host (Debian package), reading the Bluetooth GPS via `/dev/rfcomm0` (Decision #28) |
 | Lint / format / types | `ruff` (line length 100), `mypy --strict`, `yamllint` |
 | Testing | `pytest`, `pytest-asyncio`, `pytest-cov` |
 | Logging | `loguru` (never `print()` for operational output) |
@@ -128,7 +130,7 @@ tests/fixtures/      # synthetic data with known-good answers (never real drives
 homeassistant/       # HA config: configuration.yaml + packages/*.yaml
 esphome/             # one YAML per ESP32 node + common/ fragments
 grafana/provisioning/  # datasources/ and dashboards/*.json
-deploy/              # docker-compose.yml, bootstrap.sh (Pi setup), mosquitto.conf, .env.example
+deploy/              # docker-compose.yml, bootstrap.sh (Pi setup), host/ (systemd + gpsd config), mosquitto.conf, .env.example
 docs/                # pid-register.md, carplay.md, hardware notes; docs/archive/ dated
 .claude/skills/      # domain skills (see Claude Code specifics)
 ```
@@ -353,3 +355,13 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     `analytics` (never opted in, sends nothing), `backup` (no schedule) and
     `marketplace`. They're inert, and removing them would mean patching HA,
     so leave them.
+28. **2026-11-19 — gpsd runs on the Pi host, reading Dan's XGPS160 over
+    Bluetooth** (Dan's choice; supersedes #19's container, and the brief's
+    "USB GPS preferred"). The trial passed: Serial Port profile on channel 1,
+    3D fix at 10 Hz, about 2.9 m accuracy, and automatic recovery after a
+    receiver power cycle. The RFCOMM binding (`rfcomm-gps.service`) and
+    chrony's SHM refclock (#22) both live on the host, so gpsd does too: the
+    Debian package with `-b -n`. **`-b` (read-only) is required**, because
+    gpsd's default probing makes the RFCOMM link return I/O errors. The MAC
+    lives only in `deploy/.env`. gpsd listens on localhost; how bigair's
+    container reaches it is decided in #14.

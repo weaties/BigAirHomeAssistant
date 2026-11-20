@@ -54,14 +54,8 @@ services:
       GF_NEWS_NEWS_FEED_ENABLED: "false"
       INFLUX_GRAFANA_TOKEN: ${INFLUX_GRAFANA_TOKEN}
 
-  gpsd:
-    build: ./gpsd
-    restart: unless-stopped
-    ports: ["2947:2947"]
-    devices:
-      - ${GPS_DEVICE}:${GPS_DEVICE}
-    command: ["${GPS_DEVICE}"]
-    profiles: [hardware]
+  # gpsd runs on the Pi host, not here (CLAUDE.md Decision #28): the Bluetooth
+  # RFCOMM binding and chrony's SHM refclock both live on the host.
 
   bigair:
     build:

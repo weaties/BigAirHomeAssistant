@@ -1,0 +1,20 @@
+# Installed by deploy/bootstrap.sh as /etc/systemd/system/rfcomm-gps.service.
+# Binds the Bluetooth GPS's serial (SPP) channel to /dev/rfcomm0 at boot.
+# @GPS_BT_MAC@ and @GPS_BT_CHANNEL@ are filled in from deploy/.env, so the MAC
+# never lands in git. rfcomm connects lazily when gpsd opens the device, and
+# reconnects after the receiver is power-cycled (verified 2026-11-19).
+[Unit]
+Description=Bind Bluetooth GPS (SPP) to /dev/rfcomm0
+After=bluetooth.service
+Requires=bluetooth.service
+Before=gpsd.service gpsd.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/bin/rfcomm release 0
+ExecStart=/usr/bin/rfcomm bind 0 @GPS_BT_MAC@ @GPS_BT_CHANNEL@
+ExecStop=/usr/bin/rfcomm release 0
+
+[Install]
+WantedBy=multi-user.target
