@@ -206,7 +206,9 @@ class FuelModel:
         if fill.fill_type is FillType.FULL:
             gal_after = cap
             pump = s.pump_gal_since_full + (fill.gallons or 0.0)
-            if at.miles_since_full is not None and fill.gallons is not None and pump > 0:
+            known = at.miles_since_full is not None and at.miles_since_full > 0
+            if known and fill.gallons is not None and pump > 0:
+                assert at.miles_since_full is not None
                 mpg = at.miles_since_full / pump
             miles_since_full: float | None = after_miles if after_miles is not None else 0.0
             pump_since_full = 0.0

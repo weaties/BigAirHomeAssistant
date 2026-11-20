@@ -37,3 +37,31 @@ def test_statestream_never_publishes_everything(path: Path) -> None:
     assert any(include.get(k) for k in ("entities", "domains", "entity_globs")), (
         f"{path.name}: mqtt_statestream needs a non-empty include list"
     )
+
+
+def _fill_up() -> dict[str, object]:
+    doc = _load(HA_DIR / "packages" / "fill_up.yaml")
+    assert isinstance(doc, dict)
+    return doc
+
+
+def test_no_phone_name_in_the_public_repo() -> None:
+    """The notify action names Dan's phone; it must come from secrets.yaml."""
+    for path in YAML_FILES:
+        if path.name.endswith(".example"):
+            continue
+        assert "notify.mobile_app_" not in path.read_text(), path.name
+
+
+def test_fill_up_scripts_exist() -> None:
+    scripts = _fill_up()["script"]
+    assert isinstance(scripts, dict)
+    assert {"log_fill_up", "submit_fill_up_form"} <= set(scripts)
+
+
+def test_fill_up_topics_match_bigair() -> None:
+    from bigair.ha_discovery import FILL_RESPONSE_TOPIC, FILL_RESULT_TOPIC
+
+    text = (HA_DIR / "packages" / "fill_up.yaml").read_text()
+    assert FILL_RESPONSE_TOPIC in text
+    assert FILL_RESULT_TOPIC in text

@@ -7,7 +7,9 @@ samples arrive and immediately on every fill.
 
 from __future__ import annotations
 
+import json
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -15,9 +17,15 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from bigair.fill_detect import FillDetector, FillDetectorConfig
+from bigair.fill_input import FillInput, parse_response
 from bigair.fuel_model import FuelModel, FuelModelConfig
-from bigair.ha_discovery import MANUAL_FILL_TOPIC, fuel_state_payload
-from bigair.influx_io import fuel_point, vehicle_point
+from bigair.ha_discovery import (
+    FILL_RESPONSE_TOPIC,
+    FILL_RESULT_TOPIC,
+    MANUAL_FILL_TOPIC,
+    fuel_state_payload,
+)
+from bigair.influx_io import fill_up_point, fuel_point, vehicle_point
 from bigair.signals import FillSource, FillStatus, FillType, FillUp, FuelState
 from bigair.state_file import StateFileError, StateSaver, read_state
 from bigair.trip import TripMpg
@@ -30,6 +38,7 @@ if TYPE_CHECKING:
     from bigair.signals import FillCandidate, ObdSample
 
 SILENT_WHILE_MOVING = timedelta(seconds=60)  # no samples this long after moving → stale
+DUPLICATE_WINDOW = timedelta(minutes=10)  # same fill numbers again this soon = double tap
 VOLTAGE_MAX_AGE = timedelta(seconds=30)  # older van voltage isn't shown (WiCAN asleep)
 
 
@@ -55,6 +64,9 @@ class FuelService:
         self.saver = StateSaver(config.state_path, config.save_interval_s)
         self.last_sample: ObdSample | None = None
         self.trip = TripMpg()
+        self._outbox: deque[tuple[str, str]] = deque()  # (topic, payload) to publish
+        self._points: deque[Point] = deque()  # event points for Influx (fill-ups)
+        self._last_input: tuple[FillInput, datetime] | None = None
 
     @property
     def model_config(self) -> FuelModelConfig:
@@ -114,10 +126,87 @@ class FuelService:
         logger.info("filled to full: tank {:.1f} gal", self.model.tank_gal)
         self.saver.save(self.model.snapshot(), now, force=True)
 
+    def drain_outbox(self) -> list[tuple[str, str]]:
+        out = list(self._outbox)
+        self._outbox.clear()
+        return out
+
+    def drain_points(self) -> list[Point]:
+        out = list(self._points)
+        self._points.clear()
+        return out
+
+    def _reply(self, ok: bool, message: str, fill_id: str | None = None) -> None:
+        logger.info("fill-up {}: {}", "ok" if ok else "rejected", message)
+        self._outbox.append(
+            (FILL_RESULT_TOPIC, json.dumps({"ok": ok, "message": message, "fill_id": fill_id}))
+        )
+
+    def handle_fill_response(self, payload: bytes, now: datetime) -> None:
+        """Logged fill-up from HA (form or notification reply), #12."""
+        try:
+            inp = parse_response(payload.decode(errors="replace"))
+        except ValueError as e:
+            self._reply(False, f"Not logged: {e}")
+            return
+        if self.model is not None and inp.fill_id == self.model.state.last_fill_id:
+            self._reply(False, "Already logged", inp.fill_id)
+            return
+        last = self._last_input
+        if (
+            last is not None
+            and now - last[1] < DUPLICATE_WINDOW
+            and (last[0].kind, last[0].gallons, last[0].price_per_gal)
+            == (inp.kind, inp.gallons, inp.price_per_gal)
+        ):
+            self._reply(False, "Ignored duplicate of the fill just logged", inp.fill_id)
+            return
+        if self.model is None:
+            if inp.kind is not FillType.FULL:
+                self._reply(False, "Not logged: start the tank with a full fill first")
+                return
+            # Fresh install: a full fill starts the tank. No interval to measure yet.
+            self.handle_manual_full(now)
+            self._last_input = (inp, now)
+            self._reply(True, f"Tank started full ({inp.gallons:.1f} gal pumped)", inp.fill_id)
+            return
+        fill = FillUp(
+            fill_id=inp.fill_id,
+            ts=now,
+            source=FillSource.MANUAL,
+            fill_type=inp.kind,
+            status=FillStatus.CONFIRMED,
+            gallons=inp.gallons,
+            price_per_gal=inp.price_per_gal,
+        )
+        self.model.apply_fill(fill)
+        result = self.model.last_fill
+        self.saver.save(self.model.snapshot(), now, force=True)
+        self._last_input = (inp, now)
+        if result is None:
+            self._reply(False, "Not logged: the fuel model refused the fill", inp.fill_id)
+            return
+        self._points.append(fill_up_point(fill, result))
+        price = f" @ ${inp.price_per_gal:.2f}" if inp.price_per_gal else ""
+        mpg = (
+            f" · {result.mpg_since_full:.1f} mpg since last full"
+            if result.mpg_since_full is not None
+            else ""
+        )
+        self._reply(
+            True,
+            f"Logged {inp.kind.value} {inp.gallons:.1f} gal{price} · tank "
+            f"{result.tank_before_gal:.1f} → {result.tank_after_gal:.1f}{mpg}",
+            inp.fill_id,
+        )
+
     def handle_command(self, topic: str, payload: bytes, now: datetime) -> bool:
         """MQTT commands from HA. True if acted on."""
         if topic == MANUAL_FILL_TOPIC and payload.strip() == b"full":
             self.handle_manual_full(now)
+            return True
+        if topic == FILL_RESPONSE_TOPIC:
+            self.handle_fill_response(payload, now)
             return True
         logger.warning("ignoring command {} {!r}", topic, payload[:40])
         return False

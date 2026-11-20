@@ -23,6 +23,8 @@ NODE_ID = "bigair"
 AVAILABILITY_TOPIC = "bigair/status"  # LWT: bigair sets the will to OFFLINE, retained
 FUEL_STATE_TOPIC = "bigair/fuel/state"  # retained JSON; display copy only (Decision #22)
 MANUAL_FILL_TOPIC = "bigair/fill_up/manual"  # HA button → bigair ("full")
+FILL_RESPONSE_TOPIC = "bigair/fill_up/response"  # HA form / notification reply → bigair
+FILL_RESULT_TOPIC = "bigair/fill_up/result"  # bigair → HA: what was logged, or why not
 ONLINE = "online"
 OFFLINE = "offline"
 
@@ -123,6 +125,21 @@ def _calibrating_config() -> dict[str, object]:
     }
 
 
+def _last_fill_config() -> dict[str, object]:
+    return {
+        "name": "Last fill-up",
+        "object_id": "last_fill_up",
+        "unique_id": "bigair_last_fill_up",
+        "state_topic": FILL_RESULT_TOPIC,
+        "value_template": "{{ value_json.message[:250] }}",
+        "json_attributes_topic": FILL_RESULT_TOPIC,
+        "icon": "mdi:receipt-text",
+        "device": DEVICE,
+        "availability": [_ONLINE],
+        "availability_mode": "all",
+    }
+
+
 def _filled_to_full_config() -> dict[str, object]:
     return {
         "name": "Filled to full",
@@ -156,6 +173,12 @@ def discovery_messages() -> list[tuple[str, str]]:
         (
             f"{DISCOVERY_PREFIX}/binary_sensor/{NODE_ID}/fuel_calibrating/config",
             json.dumps(_calibrating_config(), sort_keys=True),
+        )
+    )
+    out.append(
+        (
+            f"{DISCOVERY_PREFIX}/sensor/{NODE_ID}/last_fill_up/config",
+            json.dumps(_last_fill_config(), sort_keys=True),
         )
     )
     out.append(

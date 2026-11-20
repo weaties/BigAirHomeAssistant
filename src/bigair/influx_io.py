@@ -22,7 +22,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
     from datetime import datetime
 
-    from bigair.signals import GpsFix, ObdSample
+    from bigair.fuel_model import FillResult
+    from bigair.signals import FillUp, GpsFix, ObdSample
 
 FieldValue = float | int | bool | str | None
 
@@ -148,6 +149,36 @@ def fuel_point(
             "mpg_rolling": mpg_rolling,
             "mpg_instant_30s": mpg_instant_30s,
             "fuel_rate_gph": fuel_rate_gph,
+        },
+    )
+
+
+def fill_up_point(fill: FillUp, result: FillResult) -> Point:
+    """One fill-up in van_history; same fill_id + timestamp + tags overwrites (idempotent)."""
+    total = (
+        None
+        if fill.gallons is None or fill.price_per_gal is None
+        else round(fill.gallons * fill.price_per_gal, 2)
+    )
+    return Point(
+        "fill_up",
+        fill.ts,
+        tags={
+            "source": fill.source.value,
+            "fill_type": fill.fill_type.value,
+            "status": fill.status.value,
+        },
+        fields={
+            "gallons": fill.gallons,
+            "price_per_gal": fill.price_per_gal,
+            "total_cost": total,
+            "odometer_mi": fill.odometer_mi,
+            "lat": fill.lat,
+            "lon": fill.lon,
+            "tank_before_gal": result.tank_before_gal,
+            "tank_after_gal": result.tank_after_gal,
+            "mpg_since_full": result.mpg_since_full,
+            "fill_id": fill.fill_id,
         },
     )
 

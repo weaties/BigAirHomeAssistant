@@ -78,8 +78,8 @@ def test_tank_and_range_go_unavailable_when_stale() -> None:
 def test_state_topics_and_templates_point_at_the_payload_keys() -> None:
     payload = json.loads(fuel_state_payload(TS, 39.95, 595.0, 14.894, None, None, False))
     for c in _configs().values():
-        if "command_topic" in c:
-            continue  # the button has no state
+        if "command_topic" in c or c["object_id"] == "last_fill_up":
+            continue  # the button has no state; last fill-up has its own topic
         assert c["state_topic"] == FUEL_STATE_TOPIC
         key = {"fuel_stale": "stale", "fuel_calibrating": "calibrating"}.get(
             str(c["object_id"]), str(c["object_id"])
@@ -114,3 +114,10 @@ def test_filled_to_full_button() -> None:
     assert cfg["command_topic"] == MANUAL_FILL_TOPIC
     assert cfg["payload_press"] == "full"
     assert cfg["unique_id"] == "bigair_filled_to_full"
+
+
+def test_last_fill_up_sensor_reads_the_result_topic() -> None:
+    topics = dict(discovery_messages())
+    cfg = json.loads(topics["homeassistant/sensor/bigair/last_fill_up/config"])
+    assert cfg["state_topic"] == "bigair/fill_up/result"
+    assert cfg["json_attributes_topic"] == "bigair/fill_up/result"
