@@ -124,6 +124,7 @@ Principles:
 src/bigair/          # all Python; one small module per concern
   signals.py         #   frozen dataclasses shared by every module
   fuel_model.py      #   tank level, gallons used, range, mpg (Critical)
+  state_file.py      #   atomic, fsync'd state file (fuel model's durable state)
   fill_detect.py     #   fill-up detection state machine (Critical)
   heater.py          #   Webasto fuel accounting (Critical)
   gps_logger.py      #   gpsd → track points

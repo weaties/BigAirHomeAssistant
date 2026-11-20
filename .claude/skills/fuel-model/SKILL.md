@@ -68,6 +68,38 @@ belong in one constants block, never as magic numbers.
   MQTT for this. Mosquitto saves retained messages to disk on an interval, so
   a power cut can roll the tank back by the whole interval.
 
+## Fills (`apply_fill`)
+
+- Only `confirmed` fills touch the tank. A `fill_id` that was already
+  applied is a no-op, so a re-delivered MQTT message is harmless. A partial
+  fill with no gallons is ignored, with a warning.
+- A fill is applied **as of `fill.ts`**: the model keeps a 24 h counter
+  history (every 10 s and at every park), so fuel burned between the pump
+  and Dan's late answer still counts against the new fill. The history is
+  not persisted. A fill older than the history is applied "now", with a
+  warning.
+- Partial fill: tank = max(tank_before, 0) + gallons, capped at capacity
+  with a warning. The overfill means the model drifted, and the next full
+  fill corrects it.
+- `miles_since_full` counts all miles, including gap miles, since the last
+  full fill. `None` means no known full fill to start from (installed after
+  a partial), so the next full fill gives no `mpg_since_full`.
+- `FuelModel.last_fill` holds `tank_before_gal`, `tank_after_gal` and
+  `mpg_since_full` for the `fill_up` record.
+- Provisional application while a fill is `pending` (`tank_estimated`,
+  `/fill-up-events`) is not built yet. It lands with the prompt flow (#11).
+
+## Durable state
+
+`FuelModel.snapshot()` / `from_snapshot()` round-trip the state and the
+rolling window as JSON. `bigair.state_file` writes them atomically (temp
+file, fsync, rename, fsync the directory); `StateSaver` writes on change, at
+most every 10 s, or immediately with `force=True` (fills). A missing file
+means a fresh install: the tank is unknown until a full fill is logged. A
+corrupt file raises `StateFileError`, so the caller shows unknown, never a
+guess. After a restore, the first sample is a new baseline: there's no
+integration across the downtime.
+
 ## mpg definitions
 
 - **`mpg_instant_30s`**: Σdistance ÷ Σengine fuel over the trailing 30 s.

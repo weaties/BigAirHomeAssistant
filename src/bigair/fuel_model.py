@@ -1,23 +1,23 @@
 """Tank level, gallons used, range and mpg — Critical tier.
 
 Design: .claude/skills/fuel-model/SKILL.md. #7 implements the integrator and
-tank level, #8 rolling/instant mpg and range. Fills and persistence (#9) are
-still NotImplementedError, so their acceptance tests stay xfail.
+tank level, #8 rolling/instant mpg and range, #9 fills and snapshots for the
+durable state file (bigair.state_file).
 """
 
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, replace
-from datetime import timedelta
-from typing import TYPE_CHECKING
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-if TYPE_CHECKING:
-    from datetime import datetime
+from bigair.signals import FillStatus, FillType, FuelState
 
-    from bigair.signals import FillUp, FuelState, ObdSample
+if TYPE_CHECKING:
+    from bigair.signals import FillUp, ObdSample
 
 LITRES_PER_GAL = 3.785411784
 ULSD_DENSITY_G_PER_L = 840.0  # assumption; corrected by pump-receipt calibration
@@ -39,6 +39,31 @@ class FuelModelConfig:
 MAX_RATE_GPH = 40.0  # anything above is a decoding error, not a V6 diesel
 STALE_AFTER_S = 60.0  # no valid fuel rate this long with ignition on → stale
 ROLLING_CHUNK_MI = 1.0  # rolling-window granularity; the oldest chunk is pro-rated
+CHECKPOINT_EVERY_S = 10.0  # counter history, so a late-confirmed fill applies at its own time
+CHECKPOINT_KEEP = timedelta(hours=24)
+SNAPSHOT_VERSION = 1
+
+
+@dataclass(frozen=True)
+class FillResult:
+    """What a confirmed fill did, for the fill_up record."""
+
+    tank_before_gal: float
+    tank_after_gal: float
+    mpg_since_full: float | None
+
+
+@dataclass(frozen=True)
+class _Checkpoint:
+    ts: datetime
+    engine_used_gal: float
+    heater_used_gal: float
+    gap_gal: float
+    miles_since_full: float | None
+
+    @classmethod
+    def of(cls, s: FuelState) -> _Checkpoint:
+        return cls(s.ts, s.engine_used_gal, s.heater_used_gal, s.gap_gal, s.miles_since_full)
 
 
 @dataclass
@@ -59,7 +84,8 @@ class FuelModel:
         self._last_valid_ts: datetime | None = None  # last sample with a usable fuel rate
         self._rolling: deque[_Chunk] = deque([_Chunk()])  # newest chunk is open, on the right
         self._instant: deque[tuple[datetime, float, float]] = deque()  # (ts, miles, gal) steps
-        self._last_full_mpg: float | None = None  # set by fills (#9); fresh-install fallback
+        self._checkpoints: deque[_Checkpoint] = deque([_Checkpoint.of(state)])
+        self.last_fill: FillResult | None = None
 
     def update(self, sample: ObdSample) -> FuelState:
         """Integrate one sample; return the new state (/fuel-model integration rules)."""
@@ -76,6 +102,7 @@ class FuelModel:
             # Engine off: no engine fuel; this sample is the new baseline.
             self._last = sample
             self.state = replace(self.state, ts=sample.ts, stale=False)
+            self._checkpoint(force=True)  # fills happen while parked
             return self.state
 
         if rate is None:
@@ -88,7 +115,7 @@ class FuelModel:
             self.state = replace(self.state, ts=sample.ts, stale=stale)
             return self.state
 
-        added = gap = 0.0
+        added = gap = miles = 0.0
         if last is not None and last.ignition and last.fuel_rate_gph is not None:
             dt = (sample.ts - last.ts).total_seconds()
             miles = ((last.speed_mph or 0.0) + (sample.speed_mph or 0.0)) / 2 * dt / 3600
@@ -102,14 +129,37 @@ class FuelModel:
                 added = gap
         self._last = sample
         self._last_valid_ts = sample.ts
+        since_full = self.state.miles_since_full
         self.state = replace(
             self.state,
             ts=sample.ts,
             engine_used_gal=self.state.engine_used_gal + added,
             gap_gal=self.state.gap_gal + gap,
+            miles_since_full=None if since_full is None else since_full + miles,
             stale=False,
         )
+        self._checkpoint()
         return self.state
+
+    def _checkpoint(self, force: bool = False) -> None:
+        cp = _Checkpoint.of(self.state)
+        newest = self._checkpoints[-1]
+        if cp == newest:
+            return
+        if force or (cp.ts - newest.ts).total_seconds() >= CHECKPOINT_EVERY_S:
+            self._checkpoints.append(cp)
+        while self._checkpoints[0].ts < cp.ts - CHECKPOINT_KEEP:
+            self._checkpoints.popleft()
+
+    def _counters_at(self, ts: datetime) -> _Checkpoint:
+        """Counters as they stood at `ts` (the latest checkpoint at or before it)."""
+        if ts >= self.state.ts:
+            return _Checkpoint.of(self.state)
+        found = [cp for cp in self._checkpoints if cp.ts <= ts]
+        if not found:
+            logger.warning("fill at {} predates the counter history; applying it now", ts)
+            return _Checkpoint.of(self.state)
+        return found[-1]
 
     def _record(self, ts: datetime, miles: float, gal: float) -> None:
         """Add one measured integration step to the rolling and instant windows."""
@@ -133,8 +183,88 @@ class FuelModel:
         return self.mpg_rolling
 
     def apply_fill(self, fill: FillUp) -> FuelState:
-        """Reset counters on a confirmed fill (full → capacity, partial → +gallons)."""
-        raise NotImplementedError("M1: fill reset")
+        """Reset counters on a confirmed fill (full → capacity, partial → +gallons).
+
+        Applied as of `fill.ts`: fuel burned between the pump and Dan's
+        confirmation still counts against the new fill.
+        """
+        s = self.state
+        if fill.status is not FillStatus.CONFIRMED or fill.fill_id == s.last_fill_id:
+            return s
+        if fill.fill_type is FillType.PARTIAL and fill.gallons is None:
+            logger.warning("partial fill {} has no gallons; ignored", fill.fill_id)
+            return s
+        at = self._counters_at(fill.ts)
+        tank_before = s.gal_after_last_fill - at.engine_used_gal - at.heater_used_gal
+        cap = self.config.capacity_gal
+        after_miles = (
+            None
+            if s.miles_since_full is None or at.miles_since_full is None
+            else s.miles_since_full - at.miles_since_full
+        )
+        mpg: float | None = None
+        if fill.fill_type is FillType.FULL:
+            gal_after = cap
+            pump = s.pump_gal_since_full + (fill.gallons or 0.0)
+            if at.miles_since_full is not None and fill.gallons is not None and pump > 0:
+                mpg = at.miles_since_full / pump
+            miles_since_full: float | None = after_miles if after_miles is not None else 0.0
+            pump_since_full = 0.0
+            mpg_since_full = mpg if mpg is not None else s.mpg_since_full
+        else:
+            assert fill.gallons is not None
+            gal_after = max(tank_before, 0.0) + fill.gallons
+            if gal_after > cap:
+                logger.warning(
+                    "partial fill {} would overfill ({:.2f} gal); capped at {}",
+                    fill.fill_id,
+                    gal_after,
+                    cap,
+                )
+                gal_after = cap
+            miles_since_full = s.miles_since_full
+            pump_since_full = s.pump_gal_since_full + fill.gallons
+            mpg_since_full = s.mpg_since_full
+        self.state = replace(
+            s,
+            gal_after_last_fill=gal_after,
+            engine_used_gal=s.engine_used_gal - at.engine_used_gal,
+            heater_used_gal=s.heater_used_gal - at.heater_used_gal,
+            gap_gal=s.gap_gal - at.gap_gal,
+            last_fill_type=fill.fill_type,
+            miles_since_full=miles_since_full,
+            pump_gal_since_full=pump_since_full,
+            mpg_since_full=mpg_since_full,
+            last_fill_id=fill.fill_id,
+        )
+        self._checkpoints = deque([_Checkpoint.of(self.state)])
+        self.last_fill = FillResult(tank_before, gal_after, mpg)
+        return self.state
+
+    def snapshot(self) -> dict[str, Any]:
+        """Everything a restart needs, as JSON-ready data for bigair.state_file."""
+        state = asdict(self.state)
+        state["ts"] = self.state.ts.isoformat()
+        state["last_fill_type"] = self.state.last_fill_type.value
+        return {
+            "version": SNAPSHOT_VERSION,
+            "state": state,
+            "rolling": [[c.miles, c.gal] for c in self._rolling],
+        }
+
+    @classmethod
+    def from_snapshot(cls, config: FuelModelConfig, data: dict[str, Any]) -> FuelModel:
+        """Restore from snapshot(). The first sample after a restart is a new baseline."""
+        if data.get("version") != SNAPSHOT_VERSION:
+            raise ValueError(f"unsupported fuel snapshot version {data.get('version')!r}")
+        raw = dict(data["state"])
+        raw["ts"] = datetime.fromisoformat(raw["ts"])
+        raw["last_fill_type"] = FillType(raw["last_fill_type"])
+        model = cls(config, FuelState(**raw))
+        model._rolling = deque(_Chunk(miles, gal) for miles, gal in data["rolling"])
+        if not model._rolling:
+            model._rolling.append(_Chunk())
+        return model
 
     @property
     def tank_gal(self) -> float:
@@ -158,7 +288,7 @@ class FuelModel:
         miles = rest_mi + oldest.miles * share
         gal = sum(c.gal for c in chunks[1:]) + oldest.gal * share
         if miles < self.config.rolling_min_mi or gal <= 0:
-            return self._last_full_mpg or self.config.prior_mpg
+            return self.state.mpg_since_full or self.config.prior_mpg
         return miles / gal
 
     @property
@@ -179,4 +309,4 @@ class FuelModel:
     @property
     def mpg_since_full(self) -> float | None:
         """True mpg of the most recent full-to-full interval, if any."""
-        raise NotImplementedError("M1: fill-to-fill mpg")
+        return self.state.mpg_since_full
