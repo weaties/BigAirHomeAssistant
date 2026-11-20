@@ -60,8 +60,15 @@ def test_fill_up_scripts_exist() -> None:
 
 
 def test_fill_up_topics_match_bigair() -> None:
+    from bigair.fill_prompt import CANDIDATE_TOPIC, EXPIRED_TOPIC
     from bigair.ha_discovery import FILL_RESPONSE_TOPIC, FILL_RESULT_TOPIC
 
     text = (HA_DIR / "packages" / "fill_up.yaml").read_text()
-    assert FILL_RESPONSE_TOPIC in text
-    assert FILL_RESULT_TOPIC in text
+    for topic in (FILL_RESPONSE_TOPIC, FILL_RESULT_TOPIC, CANDIDATE_TOPIC, EXPIRED_TOPIC):
+        assert topic in text, topic
+
+
+def test_prompt_offers_every_reply_bigair_understands() -> None:
+    text = (HA_DIR / "packages" / "fill_up.yaml").read_text()
+    for kind in ("FULL", "PARTIAL", "LATER", "SKIP"):
+        assert f"BIGAIR_FILL_{kind}::" in text, kind

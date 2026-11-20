@@ -125,6 +125,20 @@ def _calibrating_config() -> dict[str, object]:
     }
 
 
+def _fill_pending_config() -> dict[str, object]:
+    return {
+        "name": "Fill-up pending",
+        "object_id": "fill_pending",
+        "unique_id": "bigair_fill_pending",
+        "state_topic": FUEL_STATE_TOPIC,
+        "value_template": "{{ 'ON' if value_json.fill_pending else 'OFF' }}",
+        "icon": "mdi:gas-station-outline",
+        "device": DEVICE,
+        "availability": [_ONLINE],
+        "availability_mode": "all",
+    }
+
+
 def _last_fill_config() -> dict[str, object]:
     return {
         "name": "Last fill-up",
@@ -177,6 +191,12 @@ def discovery_messages() -> list[tuple[str, str]]:
     )
     out.append(
         (
+            f"{DISCOVERY_PREFIX}/binary_sensor/{NODE_ID}/fill_pending/config",
+            json.dumps(_fill_pending_config(), sort_keys=True),
+        )
+    )
+    out.append(
+        (
             f"{DISCOVERY_PREFIX}/sensor/{NODE_ID}/last_fill_up/config",
             json.dumps(_last_fill_config(), sort_keys=True),
         )
@@ -200,6 +220,7 @@ def fuel_state_payload(
     stale: bool,
     *,
     calibrating: bool = False,
+    fill_pending: bool = False,
 ) -> str:
     """The retained JSON on FUEL_STATE_TOPIC (keys match the sensor object_ids)."""
     values = {
@@ -215,4 +236,5 @@ def fuel_state_payload(
     payload["ts"] = ts.isoformat()
     payload["stale"] = stale
     payload["calibrating"] = calibrating  # 5E not yet VERIFIED (Decision #32)
+    payload["fill_pending"] = fill_pending  # a detected fill awaits Dan's answer (#11)
     return json.dumps(payload, sort_keys=True)

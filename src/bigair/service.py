@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from bigair.fill_detect import FillDetector, FillDetectorConfig
-from bigair.fill_input import FillInput, parse_response
+from bigair.fill_input import FillDecision, FillInput, parse_response
+from bigair.fill_prompt import FillPrompter
 from bigair.fuel_model import FuelModel, FuelModelConfig
 from bigair.ha_discovery import (
     FILL_RESPONSE_TOPIC,
@@ -52,6 +53,20 @@ class ServiceConfig:
     fuel_method: str = "fuel_rate"
 
 
+def _skipped_fill(c: FillCandidate) -> FillUp:
+    return FillUp(
+        fill_id=c.fill_id,
+        ts=c.ts,
+        source=FillSource.LIVE,
+        fill_type=FillType.FULL,  # unknown; the tag needs a value, status says it was skipped
+        status=FillStatus.SKIPPED,
+        gallons=None,
+        odometer_mi=c.odometer_mi,
+        lat=c.lat,
+        lon=c.lon,
+    )
+
+
 def _r(v: float | None) -> float | None:
     return None if v is None else round(v, 2)
 
@@ -67,6 +82,7 @@ class FuelService:
         self._outbox: deque[tuple[str, str]] = deque()  # (topic, payload) to publish
         self._points: deque[Point] = deque()  # event points for Influx (fill-ups)
         self._last_input: tuple[FillInput, datetime] | None = None
+        self.prompter = FillPrompter()
 
     @property
     def model_config(self) -> FuelModelConfig:
@@ -99,6 +115,12 @@ class FuelService:
         if self.model is not None:
             self.model.update(sample)
             self.saver.save(self.model.snapshot(), sample.ts)
+        # Prompting (#11). The tank is NOT changed while a fill is pending (Decision #34).
+        if candidate is not None:
+            self._outbox.extend(self.prompter.add(candidate, sample.ts))
+        self._outbox.extend(self.prompter.on_sample(sample))
+        for skipped in self.prompter.drain_skipped():
+            self._points.append(fill_up_point(_skipped_fill(skipped), None))
         return candidate
 
     def handle_manual_full(self, now: datetime) -> None:
@@ -145,10 +167,15 @@ class FuelService:
     def handle_fill_response(self, payload: bytes, now: datetime) -> None:
         """Logged fill-up from HA (form or notification reply), #12."""
         try:
-            inp = parse_response(payload.decode(errors="replace"))
+            parsed = parse_response(payload.decode(errors="replace"))
         except ValueError as e:
             self._reply(False, f"Not logged: {e}")
             return
+        if isinstance(parsed, FillDecision):
+            self._handle_decision(parsed, now)
+            return
+        inp = parsed
+        candidate = self.prompter.resolve(inp.fill_id)
         if self.model is not None and inp.fill_id == self.model.state.last_fill_id:
             self._reply(False, "Already logged", inp.fill_id)
             return
@@ -172,12 +199,16 @@ class FuelService:
             return
         fill = FillUp(
             fill_id=inp.fill_id,
-            ts=now,
-            source=FillSource.MANUAL,
+            # A reply to a detection prompt is applied as of the detection.
+            ts=candidate.ts if candidate else now,
+            source=FillSource.LIVE if candidate else FillSource.MANUAL,
             fill_type=inp.kind,
             status=FillStatus.CONFIRMED,
             gallons=inp.gallons,
             price_per_gal=inp.price_per_gal,
+            odometer_mi=candidate.odometer_mi if candidate else None,
+            lat=candidate.lat if candidate else None,
+            lon=candidate.lon if candidate else None,
         )
         self.model.apply_fill(fill)
         result = self.model.last_fill
@@ -199,6 +230,20 @@ class FuelService:
             f"{result.tank_before_gal:.1f} → {result.tank_after_gal:.1f}{mpg}",
             inp.fill_id,
         )
+
+    def _handle_decision(self, d: FillDecision, now: datetime) -> None:
+        if d.action == "later":
+            if self.prompter.later(d.fill_id, now):
+                self._reply(True, "OK, I'll ask again at the next stop", d.fill_id)
+            else:
+                self._reply(False, "That fill-up prompt is no longer open", d.fill_id)
+            return
+        candidate = self.prompter.skip(d.fill_id)
+        if candidate is None:
+            self._reply(False, "That fill-up prompt is no longer open", d.fill_id)
+            return
+        self._points.append(fill_up_point(_skipped_fill(candidate), None))
+        self._reply(True, "Marked as not a fill", d.fill_id)
 
     def handle_command(self, topic: str, payload: bytes, now: datetime) -> bool:
         """MQTT commands from HA. True if acted on."""
@@ -234,6 +279,7 @@ class FuelService:
             m.mpg_since_full if m else None,
             self.is_stale(now),
             calibrating=not self.config.fuel_rate_verified,
+            fill_pending=bool(self.prompter.pending_ids),
         )
 
     def gauge_feed(self, now: datetime) -> dict[str, object]:
@@ -256,6 +302,7 @@ class FuelService:
             "mpg_instant_30s": _r(m.mpg_instant_30s if m else None),
             "mpg_since_full": _r(m.mpg_since_full if m else None),
             "trip_mpg": _r(self.trip.trip_mpg),
+            "fill_pending": bool(self.prompter.pending_ids),
         }
 
     def _fresh_battery_v(self, now: datetime) -> float | None:

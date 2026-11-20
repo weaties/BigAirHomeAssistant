@@ -78,3 +78,16 @@ def test_invalid_values_are_rejected_with_a_reason(kw: dict[str, object], reason
 def test_garbage_json_is_rejected() -> None:
     with pytest.raises(ValueError):
         parse_response("{nope")
+
+
+@pytest.mark.parametrize("kind", ["later", "skip"])
+def test_later_and_skip_need_no_numbers(kind: str) -> None:
+    from bigair.fill_input import FillDecision
+
+    d = parse_response(json.dumps({"fill_id": "c1", "kind": kind, "text": ""}))
+    assert d == FillDecision("c1", kind)
+
+
+def test_later_without_an_id_is_rejected() -> None:
+    with pytest.raises(ValueError, match="fill_id"):
+        parse_response(json.dumps({"fill_id": "", "kind": "later"}))

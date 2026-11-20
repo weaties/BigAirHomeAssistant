@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 from typing import TYPE_CHECKING
 
 import aiomqtt
@@ -32,30 +31,12 @@ from bigair.ha_discovery import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bigair.signals import FillCandidate
-
-CANDIDATE_TOPIC = "bigair/fill_up/candidate"
-
-
-def candidate_payload(c: FillCandidate) -> str:
-    return json.dumps(
-        {
-            "fill_id": c.fill_id,
-            "ts": c.ts.isoformat(),
-            "est_gallons": round(c.est_gallons, 1),
-            "odometer_mi": c.odometer_mi,
-            "lat": c.lat,
-            "lon": c.lon,
-        }
-    )
-
 
 async def run_mqtt(
     host: str,
     port: int,
     state_payload: Callable[[], str],
     on_command: Callable[[str, bytes], object],
-    candidates: asyncio.Queue[FillCandidate],
     drain_outbox: Callable[[], list[tuple[str, str]]] = list,
     publish_every_s: float = 5.0,
     retry_s: float = 5.0,
@@ -76,11 +57,6 @@ async def run_mqtt(
                         await c.publish(FUEL_STATE_TOPIC, state_payload(), qos=0, retain=True)
                         await asyncio.sleep(publish_every_s)
 
-                async def candidate_sender(c: aiomqtt.Client = client) -> None:
-                    while True:
-                        cand = await candidates.get()
-                        await c.publish(CANDIDATE_TOPIC, candidate_payload(cand), qos=1)
-
                 async def outbox_sender(c: aiomqtt.Client = client) -> None:
                     while True:
                         for topic, payload in drain_outbox():
@@ -98,7 +74,6 @@ async def run_mqtt(
                 try:
                     async with asyncio.TaskGroup() as tg:
                         tg.create_task(publisher())
-                        tg.create_task(candidate_sender())
                         tg.create_task(outbox_sender())
                         tg.create_task(commands())
                 except asyncio.CancelledError:

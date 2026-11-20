@@ -37,6 +37,7 @@ class GaugeState:
     mpg_instant: float | None = None  # trailing 30 s
     mpg_since_full: float | None = None  # last full-to-full interval
     trip_mpg: float | None = None  # current trip average
+    fill_pending: bool = False  # a detected fill awaits Dan's answer (#11, Decision #34)
 
 
 def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
@@ -63,6 +64,7 @@ def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
         mpg_instant=num("mpg_instant_30s"),
         mpg_since_full=num("mpg_since_full"),
         trip_mpg=num("trip_mpg"),
+        fill_pending=bool(d.get("fill_pending", False)),
     )
 
 
@@ -197,6 +199,8 @@ def status_text(state: GaugeState, now: datetime, tz: str) -> str:
         return "STALE: NO ENGINE DATA"  # service alive, but samples stopped while moving
     if is_stale(state, now):
         return f"STALE since {_local(state.updated, tz)}"  # feed stopped: service down
+    if state.fill_pending:
+        return "FILL PENDING · ANSWER ON PHONE"  # tank excludes the unconfirmed fill
     if state.calibrating:
         return "LIVE · CALIBRATING"  # 5E not yet verified against the pump (Decision #32)
     return "LIVE"

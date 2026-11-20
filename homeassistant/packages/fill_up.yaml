@@ -7,6 +7,9 @@
 #                              Add it to CarPlay Quick access in the Companion app.
 #   script.submit_fill_up_form → the dashboard form (helpers below).
 #   bigair/fill_up/result    → notification back with what was logged, or why not.
+#   bigair/fill_up/candidate → bigair detected a fill: prompt with Full / Partial /
+#                              Later / Not a fill (#11). Re-prompts reuse the tag.
+#   bigair/fill_up/expired   → 3 prompts unanswered: persistent notification.
 #
 # The phone's notify action comes from secrets.yaml (mobile_app_notify), so the
 # device name never lands in this public repo.
@@ -81,6 +84,56 @@ script:
           value: 0
 
 automation:
+  - id: bigair_fill_up_prompt
+    alias: Detected fill-up → phone prompt
+    description: >-
+      bigair detected a fill (or is re-prompting). Same tag as earlier prompts for
+      this fill, so a re-prompt replaces the old notification.
+    triggers:
+      - trigger: mqtt
+        topic: bigair/fill_up/candidate
+    actions:
+      - action: !secret mobile_app_notify
+        data:
+          title: "Fill-up detected (~{{ trigger.payload_json.est_gallons }} gal)"
+          message: >-
+            Reply under Full or Partial with gallons, then price — e.g. 22.4 4.19
+            {%- if trigger.payload_json.attempt > 1 %} (reminder {{ trigger.payload_json.attempt }}/3){% endif %}
+          data:
+            tag: "{{ trigger.payload_json.fill_id }}"
+            actions:
+              - action: "BIGAIR_FILL_FULL::{{ trigger.payload_json.fill_id }}"
+                title: Full
+                behavior: textInput
+                textInputButtonTitle: Log
+                textInputPlaceholder: "22.4 4.19"
+              - action: "BIGAIR_FILL_PARTIAL::{{ trigger.payload_json.fill_id }}"
+                title: Partial
+                behavior: textInput
+                textInputButtonTitle: Log
+                textInputPlaceholder: "10.5 4.19"
+              - action: "BIGAIR_FILL_LATER::{{ trigger.payload_json.fill_id }}"
+                title: Later
+              - action: "BIGAIR_FILL_SKIP::{{ trigger.payload_json.fill_id }}"
+                title: Not a fill
+                destructive: true
+
+  - id: bigair_fill_up_expired
+    alias: Unanswered fill-up → persistent notice
+    description: Three prompts went unanswered; leave a notice so it can still be logged.
+    triggers:
+      - trigger: mqtt
+        topic: bigair/fill_up/expired
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: "bigair_fill_{{ trigger.payload_json.fill_id }}"
+          title: Unlogged fill-up
+          message: >-
+            A fill of about {{ trigger.payload_json.est_gallons }} gal was detected at
+            {{ as_timestamp(trigger.payload_json.ts) | timestamp_custom('%a %H:%M') }} and
+            never answered. The tank model ignored it. Log it with "Log fill-up".
+
   - id: bigair_fill_up_reply
     alias: Fill-up reply → bigair
     description: Forward the phone's Full/Partial text reply to bigair as-is.
@@ -96,9 +149,11 @@ automation:
       - action: mqtt.publish
         data:
           topic: bigair/fill_up/response
+          # BIGAIR_FILL_<FULL|PARTIAL|LATER|SKIP>::<fill_id> → kind + fill_id, unchanged.
           payload: >-
             {{ {"fill_id": trigger.event.data.action.split('::')[1],
-                "kind": "full" if trigger.event.data.action.startswith('BIGAIR_FILL_FULL') else "partial",
+                "kind": trigger.event.data.action.split('::')[0]
+                          | replace('BIGAIR_FILL_', '') | lower,
                 "text": trigger.event.data.reply_text | default('')} | to_json }}
 
   - id: bigair_fill_up_result

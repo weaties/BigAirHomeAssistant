@@ -419,4 +419,13 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     publishes everything derived to MQTT, so the backbone is unchanged for every
     consumer. Only one TCP client at a time: stop the drive logger while bigair
     runs.
+34. **2026-11-21 — No provisional tank update while a detected fill is
+    pending** (supersedes the "provisionally applies the level-estimated
+    gallons" line in `/fill-up-events`). The estimate comes from the stock
+    sender through an uncalibrated table (Decision #31), so adding it could be
+    off by many gallons and would look confident. Until Dan answers, the tank
+    stays at its pre-fill value, an underestimate (the safe direction). HA and
+    the dash show **FILL PENDING**. When he answers, the fill is applied as of
+    the detection time, so nothing is lost. Revisit once the level table is
+    learned from real fills.
 

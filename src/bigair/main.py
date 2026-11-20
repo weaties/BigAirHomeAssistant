@@ -5,10 +5,6 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from bigair.signals import FillCandidate
 
 
 def _display(args: argparse.Namespace) -> int:
@@ -83,14 +79,13 @@ def _run(args: argparse.Namespace) -> int:
     if writer is None:
         logger.warning("INFLUX_BIGAIR_TOKEN not set: not writing history")
 
-    async def ingest(candidates: asyncio.Queue[FillCandidate]) -> None:
+    async def ingest() -> None:
         async for sample in poll_samples(
             env.get("WICAN_HOST", "192.168.8.106"), int(env.get("WICAN_PORT", "35000"))
         ):
-            cand = svc.handle_sample(sample)
+            cand = svc.handle_sample(sample)  # prompts go out through svc's outbox
             if cand is not None:
                 logger.info("fill candidate: ~{:.1f} gal", cand.est_gallons)
-                candidates.put_nowait(cand)
             if writer is not None:
                 for point in svc.influx_points(sample.ts):
                     writer.add(point)
@@ -122,9 +117,8 @@ def _run(args: argparse.Namespace) -> int:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
-        candidates: asyncio.Queue[FillCandidate] = asyncio.Queue()
         tasks = [
-            asyncio.create_task(ingest(candidates)),
+            asyncio.create_task(ingest()),
             asyncio.create_task(influx_flusher()),
             asyncio.create_task(gauge_writer()),
             asyncio.create_task(
@@ -133,7 +127,6 @@ def _run(args: argparse.Namespace) -> int:
                     int(env.get("MQTT_PORT", "1883")),
                     state_payload=lambda: svc.state_payload(datetime.now(UTC)),
                     on_command=lambda t, p: svc.handle_command(t, p, datetime.now(UTC)),
-                    candidates=candidates,
                     drain_outbox=svc.drain_outbox,
                 )
             ),

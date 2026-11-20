@@ -81,9 +81,11 @@ def test_state_topics_and_templates_point_at_the_payload_keys() -> None:
         if "command_topic" in c or c["object_id"] == "last_fill_up":
             continue  # the button has no state; last fill-up has its own topic
         assert c["state_topic"] == FUEL_STATE_TOPIC
-        key = {"fuel_stale": "stale", "fuel_calibrating": "calibrating"}.get(
-            str(c["object_id"]), str(c["object_id"])
-        )
+        key = {
+            "fuel_stale": "stale",
+            "fuel_calibrating": "calibrating",
+            "fill_pending": "fill_pending",
+        }.get(str(c["object_id"]), str(c["object_id"]))
         assert key in payload
 
 
@@ -98,6 +100,7 @@ def test_fuel_state_payload_rounds_and_keeps_unknowns_null() -> None:
         "mpg_since_full": 13.2,
         "stale": True,
         "calibrating": False,
+        "fill_pending": False,
     }
 
 
