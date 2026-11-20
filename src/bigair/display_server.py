@@ -28,6 +28,7 @@ from bigair.display_render import (
     DebugInfo,
     GaugeState,
     debug_from_dict,
+    gauge_from_dict,
     pack_epd_4bit,
     render_gauge,
 )
@@ -35,6 +36,19 @@ from bigair.display_render import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+
+def gauge_file_reader(path: Path) -> Callable[[], GaugeState]:
+    """Read the fuel service's gauge feed on each frame; no data if missing or unreadable."""
+
+    def read() -> GaugeState:
+        try:
+            return gauge_from_dict(json.loads(path.read_text()))
+        except (OSError, ValueError) as e:
+            logger.debug("no gauge feed from {}: {}", path, e)
+            return GaugeState(tank_gal=None, range_mi=None)
+
+    return read
 
 
 def debug_file_reader(path: Path) -> Callable[[], DebugInfo | None]:

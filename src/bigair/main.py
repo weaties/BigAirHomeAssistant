@@ -15,13 +15,16 @@ def _display(args: argparse.Namespace) -> int:
     from loguru import logger
 
     from bigair.display_render import GaugeState
-    from bigair.display_server import debug_file_reader, make_server
+    from bigair.display_server import debug_file_reader, gauge_file_reader, make_server
 
-    # M1 (#17): replace with the fuel model's state from MQTT. Until then the
-    # gauge truthfully shows "NO FUEL DATA" (CLAUDE.md: a wrong fuel number is
-    # worse than no number).
-    def state() -> GaugeState:
+    # Live numbers come from the fuel service's gauge feed (#17). Without one the
+    # gauge truthfully shows "NO FUEL DATA" (a wrong fuel number is worse than none).
+    gauge_path = os.environ.get("DISPLAY_GAUGE_FILE")
+
+    def no_data() -> GaugeState:
         return GaugeState(tank_gal=None, range_mi=None)
+
+    state = gauge_file_reader(Path(gauge_path)) if gauge_path else no_data
 
     # Drive-testing aid: DISPLAY_DEBUG_FILE (host JSON, deploy/host/bigair-debug.py)
     # replaces the sparkline with Pi-supply and van-battery readings.
@@ -92,6 +95,18 @@ def _run(args: argparse.Namespace) -> int:
                 for point in svc.influx_points(sample.ts):
                     writer.add(point)
 
+    gauge_path = env.get("BIGAIR_GAUGE_FILE")
+
+    async def gauge_writer() -> None:
+        from bigair.state_file import write_state
+
+        while gauge_path:
+            try:
+                write_state(Path(gauge_path), svc.gauge_feed(datetime.now(UTC)), durable=False)
+            except OSError as e:
+                logger.warning("gauge feed write failed: {}", e)
+            await asyncio.sleep(5)
+
     async def influx_flusher() -> None:
         while writer is not None:
             await asyncio.sleep(10)
@@ -109,6 +124,7 @@ def _run(args: argparse.Namespace) -> int:
         tasks = [
             asyncio.create_task(ingest(candidates)),
             asyncio.create_task(influx_flusher()),
+            asyncio.create_task(gauge_writer()),
             asyncio.create_task(
                 run_mqtt(
                     env.get("MQTT_HOST", "mosquitto"),

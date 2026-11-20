@@ -20,15 +20,22 @@ class StateFileError(Exception):
     """The state file exists but can't be read. Callers show 'unknown', never a guess."""
 
 
-def write_state(path: Path, data: dict[str, Any]) -> None:
-    """Atomically replace `path` with `data` as JSON."""
+def write_state(path: Path, data: dict[str, Any], *, durable: bool = True) -> None:
+    """Atomically replace `path` with `data` as JSON.
+
+    durable=False skips the fsyncs: still never torn, but a power cut may lose
+    the latest write. For display copies only, never for fuel state.
+    """
     tmp = path.with_name(path.name + ".tmp")
     payload = json.dumps(data, sort_keys=True, separators=(",", ":"))
     with tmp.open("w") as f:
         f.write(payload)
         f.flush()
-        os.fsync(f.fileno())
+        if durable:
+            os.fsync(f.fileno())
     os.replace(tmp, path)
+    if not durable:
+        return
     dir_fd = os.open(path.parent, os.O_RDONLY)
     try:
         os.fsync(dir_fd)

@@ -29,7 +29,31 @@ class GaugeState:
     range_mi: float | None
     capacity_gal: float = 47.0
     mpg_spark: tuple[float, ...] = ()  # current-trip mpg buckets, oldest first
-    updated: datetime | None = None  # UTC time of the fuel-model state
+    updated: datetime | None = None  # UTC time the fuel service wrote the feed
+    stale: bool = False  # the service says its inputs stopped (moving, no data)
+    calibrating: bool = False  # 5E not yet VERIFIED (Decision #32)
+
+
+def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
+    """Parse the fuel service's gauge feed (FuelService.gauge_feed)."""
+
+    def num(key: str) -> float | None:
+        v = d.get(key)
+        return None if v is None else float(v)
+
+    try:
+        updated = datetime.strptime(str(d["ts"]), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except (KeyError, ValueError) as e:
+        raise ValueError(f"bad gauge feed: {e}") from e
+    return GaugeState(
+        tank_gal=num("tank_gal"),
+        range_mi=num("range_mi"),
+        capacity_gal=num("capacity_gal") or 47.0,
+        mpg_spark=tuple(float(v) for v in d.get("mpg_spark") or ()),
+        updated=updated,
+        stale=bool(d.get("stale", False)),
+        calibrating=bool(d.get("calibrating", False)),
+    )
 
 
 DEBUG_STALE_AFTER = timedelta(seconds=30)
@@ -98,7 +122,7 @@ def is_stale(state: GaugeState, now: datetime, max_age: timedelta = STALE_AFTER)
     """A missing, untimed or old reading is stale; never shown as current."""
     if state.tank_gal is None or state.range_mi is None or state.updated is None:
         return True
-    return now - state.updated > max_age
+    return state.stale or now - state.updated > max_age
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -185,6 +209,8 @@ def render_gauge(
         status = "NO FUEL DATA"
     elif stale:
         status = f"STALE since {_local(state.updated, tz)}"
+    elif state.calibrating:
+        status = "LIVE · CALIBRATING"  # 5E not yet verified against the pump
     else:
         status = "LIVE"
     draw.text(

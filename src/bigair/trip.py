@@ -1,0 +1,62 @@
+"""Current-trip mpg buckets for the dash sparkline (#17).
+
+A trip starts when the engine runs again after a long park. Every
+`bucket_mi` of measured driving closes a bucket with its own mpg. Gaps in the
+data are never bridged (the fuel model estimates those; a sparkline doesn't
+need to). Pure: ObdSample in, buckets out.
+"""
+
+from __future__ import annotations
+
+from collections import deque
+from datetime import timedelta
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bigair.signals import ObdSample
+
+MAX_STEP_S = 5.0
+EPS_MI = 1e-6
+
+
+class TripMpg:
+    def __init__(
+        self,
+        bucket_mi: float = 2.0,
+        max_buckets: int = 40,
+        new_trip_after: timedelta = timedelta(minutes=30),
+        cap_mpg: float = 50.0,
+    ) -> None:
+        self.bucket_mi = bucket_mi
+        self.new_trip_after = new_trip_after
+        self.cap_mpg = cap_mpg
+        self._buckets: deque[float] = deque(maxlen=max_buckets)
+        self._miles = 0.0
+        self._gal = 0.0
+        self._last: ObdSample | None = None  # last ignition-on sample with speed and rate
+
+    @property
+    def buckets(self) -> tuple[float, ...]:
+        return tuple(self._buckets)
+
+    def update(self, sample: ObdSample) -> None:
+        if not sample.ignition or sample.speed_mph is None or sample.fuel_rate_gph is None:
+            return
+        last, self._last = self._last, sample
+        if last is None:
+            return
+        gap = sample.ts - last.ts
+        if gap > self.new_trip_after:
+            self._buckets.clear()
+            self._miles = self._gal = 0.0
+            return
+        dt = gap.total_seconds()
+        if dt <= 0 or dt > MAX_STEP_S:
+            return
+        assert last.speed_mph is not None and last.fuel_rate_gph is not None
+        self._miles += (last.speed_mph + sample.speed_mph) / 2 * dt / 3600
+        self._gal += (last.fuel_rate_gph + sample.fuel_rate_gph) / 2 * dt / 3600
+        if self._miles >= self.bucket_mi - EPS_MI:
+            mpg = self.cap_mpg if self._gal <= 0 else min(self._miles / self._gal, self.cap_mpg)
+            self._buckets.append(mpg)
+            self._miles = self._gal = 0.0

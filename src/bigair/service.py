@@ -20,6 +20,7 @@ from bigair.ha_discovery import MANUAL_FILL_TOPIC, fuel_state_payload
 from bigair.influx_io import fuel_point, vehicle_point
 from bigair.signals import FillSource, FillStatus, FillType, FillUp, FuelState
 from bigair.state_file import StateFileError, StateSaver, read_state
+from bigair.trip import TripMpg
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -48,6 +49,7 @@ class FuelService:
         self.detector = FillDetector(FillDetectorConfig(capacity_gal=config.capacity_gal))
         self.saver = StateSaver(config.state_path, config.save_interval_s)
         self.last_sample: ObdSample | None = None
+        self.trip = TripMpg()
 
     @property
     def model_config(self) -> FuelModelConfig:
@@ -75,6 +77,7 @@ class FuelService:
 
     def handle_sample(self, sample: ObdSample) -> FillCandidate | None:
         self.last_sample = sample
+        self.trip.update(sample)
         candidate = self.detector.update(sample)
         if self.model is not None:
             self.model.update(sample)
@@ -138,6 +141,20 @@ class FuelService:
             self.is_stale(now),
             calibrating=not self.config.fuel_rate_verified,
         )
+
+    def gauge_feed(self, now: datetime) -> dict[str, object]:
+        """What the dash display needs (#17). `ts` is when the service wrote it, so an
+        old feed means the service is down; parked with the engine off stays live."""
+        m = self.model
+        return {
+            "ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tank_gal": None if m is None else round(m.tank_gal, 2),
+            "range_mi": None if m is None else round(m.range_mi, 1),
+            "capacity_gal": self.config.capacity_gal,
+            "stale": self.is_stale(now),
+            "calibrating": not self.config.fuel_rate_verified,
+            "mpg_spark": [round(v, 2) for v in self.trip.buckets],
+        }
 
     def influx_points(self, now: datetime) -> list[Point]:
         points: list[Point] = []
