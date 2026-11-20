@@ -47,7 +47,9 @@ def make_server(
         server_version = "bigair-display"
 
         def log_message(self, fmt: str, *args: object) -> None:
-            logger.debug("display http: " + fmt, *args)
+            # http.server passes %-style args; loguru formats with {}, so
+            # interpolate here or the line logs the raw "%s" placeholders.
+            logger.debug("display http {} {}", self.address_string(), fmt % args)
 
         def _send(
             self, code: int, body: bytes, ctype: str, extra: dict[str, str] | None = None
