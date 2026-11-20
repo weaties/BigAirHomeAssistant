@@ -30,6 +30,7 @@ MUST_BE_IGNORED = [
     "homeassistant/blueprints/automation/homeassistant/motion_light.yaml",
     "homeassistant/www/x",
     "homeassistant/home-assistant.log.fault",
+    "homeassistant/.cache/x",  # appeared after onboarding
     "esphome/secrets.yaml",
     "deploy/.env",
     "deploy/volumes/influxdb/x",
