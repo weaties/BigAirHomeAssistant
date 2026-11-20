@@ -175,3 +175,22 @@ InfluxDB writes constantly and SD cards wear out (CLAUDE.md Decisions #6 and
 Once `ssh <user>@bigair-ha.local` works from the Mac without a password, Claude
 Code can run these steps over SSH from the Mac. It confirms before each step
 that changes the Pi.
+
+## Drive testing: power debug on the dash display
+
+While the van's 5 V supply is being sorted out, the gauge can show the Pi's
+supply voltage, under-voltage and throttle flags, the van battery voltage and
+uptime in place of the trip sparkline:
+
+```bash
+sudo install -D -m 755 deploy/host/bigair-debug.py /opt/bigair/bigair-debug.py
+sudo install -m 644 deploy/host/bigair-debug.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now bigair-debug
+# deploy/.env: DISPLAY_DEBUG_FILE=/run/bigair/debug.json (and DISPLAY_REFRESH_SECONDS=20)
+docker compose -f deploy/docker-compose.yml up -d display
+```
+
+`UNDERVOLT!` means the Pi is under-voltage right now. `(UV,THR since boot)`
+means it has been at some point since boot. The van voltage appears only while
+something writes `/run/bigair/van_battery_v` (the drive logger does this).
+Clear `DISPLAY_DEBUG_FILE` to go back to the sparkline.

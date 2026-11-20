@@ -75,3 +75,12 @@ pio run -t upload --upload-port /dev/cu.usbmodem2101   # ALWAYS pass the port
   or a replug.
 - Serial capture: a reconnecting pyserial reader. Don't toggle DTR/RTS.
 - A healthy boot shows `[epd] 960x540`, `[wifi] … joined`, `[http] frame ok`.
+
+## Debug strip (drive testing)
+
+`DISPLAY_DEBUG_FILE` points the display server at the host's
+`/run/bigair/debug.json` (`deploy/host/bigair-debug.service`). When it's set
+and readable, the trip sparkline is replaced by a power status line:
+`PI 5.01V OK | VAN 14.2V | UP 12m`. Data older than 30 s is prefixed
+`DEBUG STALE`. A missing or garbled file just means no strip. Setup steps are
+in `docs/hardware/pi-setup.md`.

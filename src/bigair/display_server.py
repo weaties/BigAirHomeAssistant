@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hmac
 import io
+import json
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
@@ -23,10 +24,30 @@ from urllib.parse import parse_qs, urlsplit
 
 from loguru import logger
 
-from bigair.display_render import GaugeState, pack_epd_4bit, render_gauge
+from bigair.display_render import (
+    DebugInfo,
+    GaugeState,
+    debug_from_dict,
+    pack_epd_4bit,
+    render_gauge,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
+
+
+def debug_file_reader(path: Path) -> Callable[[], DebugInfo | None]:
+    """Read the host's debug JSON on each frame; None if missing or unreadable."""
+
+    def read() -> DebugInfo | None:
+        try:
+            return debug_from_dict(json.loads(path.read_text()))
+        except (OSError, ValueError) as e:
+            logger.debug("no debug info from {}: {}", path, e)
+            return None
+
+    return read
 
 
 def make_server(
@@ -38,6 +59,7 @@ def make_server(
     refresh_s: int,
     full_refresh_s: int,
     tz: str,
+    debug_fn: Callable[[], DebugInfo | None] = lambda: None,
 ) -> ThreadingHTTPServer:
     if not api_key:
         raise ValueError("DISPLAY_API_KEY must be set")
@@ -79,7 +101,7 @@ def make_server(
                 self._send(401, b"unauthorized\n", "text/plain")
                 return
             invert = parse_qs(url.query).get("invert", ["0"])[0] in ("1", "true")
-            img = render_gauge(state_fn(), datetime.now(UTC), tz=tz)
+            img = render_gauge(state_fn(), datetime.now(UTC), tz=tz, debug=debug_fn())
             if url.path == "/api/display.png":
                 if invert:
                     img = img.point(lambda v: 255 - v)
