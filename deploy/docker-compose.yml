@@ -91,6 +91,14 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
+    # Fuel service (#53): WiCAN → fuel model → state file, HA over MQTT, InfluxDB.
+    command: ["uv", "run", "--no-sync", "bigair", "run"]
     depends_on: [mosquitto, influxdb]
     env_file: .env
-    profiles: [services]  # M1: services have no runnable loop yet
+    environment:
+      MQTT_HOST: mosquitto
+      INFLUX_URL: http://influxdb:8086
+      BIGAIR_STATE_FILE: /data/fuel_state.json
+    volumes:
+      - ../data/bigair:/data  # durable fuel state (Decision #22); gitignored
+    stop_grace_period: 15s  # time to save state on SIGTERM

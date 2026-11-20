@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bigair.signals import FillCandidate
 
 
 def _display(args: argparse.Namespace) -> int:
@@ -38,6 +42,96 @@ def _display(args: argparse.Namespace) -> int:
     return 0
 
 
+MIN_SANE_EPOCH = 1_793_491_200  # 2026-11-01Z: interim clock guard until #22
+
+
+def _run(args: argparse.Namespace) -> int:
+    import asyncio
+    import signal
+    import time
+    from datetime import UTC, datetime
+
+    from loguru import logger
+
+    from bigair.influx_io import InfluxWriter
+    from bigair.mqtt_io import run_mqtt
+    from bigair.service import FuelService, ServiceConfig
+    from bigair.wican_elm import poll_samples
+
+    env = os.environ
+    svc = FuelService.start(
+        ServiceConfig(
+            state_path=Path(env.get("BIGAIR_STATE_FILE", "/data/fuel_state.json")),
+            capacity_gal=float(env.get("TANK_CAPACITY_GAL", "47")),
+            prior_mpg=float(env.get("PRIOR_MPG", "15")),
+        )
+    )
+    token = env.get("INFLUX_BIGAIR_TOKEN", "")
+    writer = (
+        InfluxWriter(
+            env.get("INFLUX_URL", "http://influxdb:8086"),
+            org=env.get("INFLUX_ORG", "bigair"),
+            token=token,
+            clock_ok=lambda: time.time() > MIN_SANE_EPOCH,
+        )
+        if token
+        else None
+    )
+    if writer is None:
+        logger.warning("INFLUX_BIGAIR_TOKEN not set: not writing history")
+
+    async def ingest(candidates: asyncio.Queue[FillCandidate]) -> None:
+        async for sample in poll_samples(
+            env.get("WICAN_HOST", "192.168.8.106"), int(env.get("WICAN_PORT", "35000"))
+        ):
+            cand = svc.handle_sample(sample)
+            if cand is not None:
+                logger.info("fill candidate: ~{:.1f} gal", cand.est_gallons)
+                candidates.put_nowait(cand)
+            if writer is not None:
+                for point in svc.influx_points(sample.ts):
+                    writer.add(point)
+
+    async def influx_flusher() -> None:
+        while writer is not None:
+            await asyncio.sleep(10)
+            try:
+                await asyncio.to_thread(writer.flush)
+            except Exception as e:  # noqa: BLE001 — never let history kill the fuel loop
+                logger.warning("influx flush failed: {}", e)
+
+    async def main_async() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop.set)
+        candidates: asyncio.Queue[FillCandidate] = asyncio.Queue()
+        tasks = [
+            asyncio.create_task(ingest(candidates)),
+            asyncio.create_task(influx_flusher()),
+            asyncio.create_task(
+                run_mqtt(
+                    env.get("MQTT_HOST", "mosquitto"),
+                    int(env.get("MQTT_PORT", "1883")),
+                    state_payload=lambda: svc.state_payload(datetime.now(UTC)),
+                    on_command=lambda t, p: svc.handle_command(t, p, datetime.now(UTC)),
+                    candidates=candidates,
+                )
+            ),
+        ]
+        await stop.wait()
+        logger.info("stopping: saving fuel state")
+        svc.flush(datetime.now(UTC))
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if writer is not None:
+            await asyncio.to_thread(writer.flush)
+
+    asyncio.run(main_async())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bigair", description="Van telemetry services")
     parser.add_argument("--version", action="store_true", help="print version and exit")
@@ -45,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     disp = sub.add_parser("display", help="serve the dash fuel gauge frame (eink-screen firmware)")
     disp.add_argument("--host", default="0.0.0.0")  # noqa: S104 — van LAN; Bearer key required
     disp.add_argument("--port", type=int, default=int(os.environ.get("DISPLAY_PORT", "8090")))
+    sub.add_parser("run", help="run the fuel service (WiCAN → fuel model → HA/MQTT, InfluxDB)")
     args = parser.parse_args(argv)
     if args.version:
         from importlib.metadata import version
@@ -53,4 +148,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "display":
         return _display(args)
+    if args.command == "run":
+        return _run(args)
     return 0

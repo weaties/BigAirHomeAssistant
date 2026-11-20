@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from bigair.ha_discovery import (
     AVAILABILITY_TOPIC,
     FUEL_STATE_TOPIC,
+    MANUAL_FILL_TOPIC,
     OFFLINE,
     ONLINE,
     discovery_messages,
@@ -25,7 +26,7 @@ def test_every_message_is_a_retained_discovery_config_topic() -> None:
     for topic in _configs():
         parts = topic.split("/")
         assert parts[0] == "homeassistant"
-        assert parts[1] in {"sensor", "binary_sensor"}
+        assert parts[1] in {"sensor", "binary_sensor", "button"}
         assert parts[2] == "bigair"
         assert parts[-1] == "config"
 
@@ -77,8 +78,12 @@ def test_tank_and_range_go_unavailable_when_stale() -> None:
 def test_state_topics_and_templates_point_at_the_payload_keys() -> None:
     payload = json.loads(fuel_state_payload(TS, 39.95, 595.0, 14.894, None, None, False))
     for c in _configs().values():
+        if "command_topic" in c:
+            continue  # the button has no state
         assert c["state_topic"] == FUEL_STATE_TOPIC
-        key = c["object_id"] if c["object_id"] != "fuel_stale" else "stale"
+        key = {"fuel_stale": "stale", "fuel_calibrating": "calibrating"}.get(
+            str(c["object_id"]), str(c["object_id"])
+        )
         assert key in payload
 
 
@@ -92,4 +97,20 @@ def test_fuel_state_payload_rounds_and_keeps_unknowns_null() -> None:
         "mpg_instant_30s": None,
         "mpg_since_full": 13.2,
         "stale": True,
+        "calibrating": False,
     }
+
+
+def test_calibrating_flag_is_a_binary_sensor() -> None:
+    by_id = {c["object_id"]: c for c in _configs().values()}
+    cal = by_id["fuel_calibrating"]
+    assert cal["state_topic"] == FUEL_STATE_TOPIC
+    assert "calibrating" in str(cal["value_template"])
+
+
+def test_filled_to_full_button() -> None:
+    topics = dict(discovery_messages())
+    cfg = json.loads(topics["homeassistant/button/bigair/filled_to_full/config"])
+    assert cfg["command_topic"] == MANUAL_FILL_TOPIC
+    assert cfg["payload_press"] == "full"
+    assert cfg["unique_id"] == "bigair_filled_to_full"

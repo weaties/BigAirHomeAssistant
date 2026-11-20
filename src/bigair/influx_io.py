@@ -9,6 +9,7 @@ to the InfluxDB 2.x write API (stdlib only). Points are buffered in memory
 from __future__ import annotations
 
 import math
+import threading
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -168,6 +169,7 @@ class InfluxWriter:
         self.timeout_s = timeout_s
         self.clock_ok = clock_ok
         self._buffer: deque[tuple[str, str]] = deque(maxlen=max_buffer)
+        self._lock = threading.Lock()  # add() on the event loop, flush() in a worker thread
         self.dropped = 0
 
     @property
@@ -175,9 +177,11 @@ class InfluxWriter:
         return len(self._buffer)
 
     def add(self, point: Point) -> None:
-        if len(self._buffer) == self._buffer.maxlen:
-            self.dropped += 1
-        self._buffer.append((bucket_for(point.measurement), to_line(point)))
+        line = (bucket_for(point.measurement), to_line(point))
+        with self._lock:
+            if len(self._buffer) == self._buffer.maxlen:
+                self.dropped += 1
+            self._buffer.append(line)
 
     def add_all(self, points: Iterable[Point]) -> None:
         for p in points:
@@ -187,7 +191,9 @@ class InfluxWriter:
         """Write everything buffered; return lines written. Failures stay buffered."""
         if not self._buffer or not self.clock_ok():
             return 0
-        batch = list(self._buffer)
+        with self._lock:
+            batch = list(self._buffer)
+            self._buffer.clear()
         by_bucket: dict[str, list[str]] = {}
         for bucket, line in batch:
             by_bucket.setdefault(bucket, []).append(line)
@@ -213,7 +219,10 @@ class InfluxWriter:
                 continue
             written.add(bucket)
         sent = [item for item in batch if item[0] in written]
-        remaining = [item for item in self._buffer if item[0] not in written]
-        self._buffer.clear()
-        self._buffer.extend(remaining)
+        failed = [item for item in batch if item[0] not in written]
+        with self._lock:
+            # Put failures back in front of anything added meanwhile (oldest first).
+            newer = list(self._buffer)
+            self._buffer.clear()
+            self._buffer.extend(failed + newer)
         return len(sent)
