@@ -123,6 +123,8 @@ Principles:
 ```
 src/bigair/          # all Python; one small module per concern
   signals.py         #   frozen dataclasses shared by every module
+  obd_decode.py      #   ELM327 responses → ObdSample (register signals only)
+  wican_elm.py       #   edge: WiCAN ELM327 TCP poller (Decision #33)
   fuel_model.py      #   tank level, gallons used, range, mpg (Critical)
   state_file.py      #   atomic, fsync'd state file (fuel model's durable state)
   fill_detect.py     #   fill-up detection state machine (Critical)
@@ -400,3 +402,21 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     *delta* detector, through a calibration table learned from fill-ups
     (sender reading vs model gallons). It's never the tank level, because the
     tank's shape differs from the one the sender was made for.
+32. **2026-11-20 — Tank and range are shown while `5E` is calibrating** (Dan's
+    choice). `5E` responds with plausible values but stays RESPONDS until a
+    full-to-full pump comparison over at least 100 mi. Collecting that needs the
+    pipeline running, so tank and range are published flagged `calibrating`
+    (HA attribute and a dash label) rather than hidden. This is a deliberate,
+    bounded exception to "never show an unverified number as fact": the flag
+    *is* the disclosure. It clears automatically when `5E` is VERIFIED and the
+    calibration factor is applied.
+33. **2026-11-20 — bigair polls the WiCAN's ELM327 interface over TCP**
+    (amends #4 for OBD; supersedes the AutoPID→MQTT plan in #5). On the van,
+    TCP 35000 polling of the engine ECU was proven in the first scan and drive.
+    WiCAN AutoPID's MQTT payload format would have been a guess. Decoders are
+    tested from the raw bytes captured on the van (`obd_decode.py`), and the
+    poller (`wican_elm.py`) is an edge like the gpsd client. bigair still
+    publishes everything derived to MQTT, so the backbone is unchanged for every
+    consumer. Only one TCP client at a time: stop the drive logger while bigair
+    runs.
+
