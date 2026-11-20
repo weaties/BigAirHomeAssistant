@@ -114,3 +114,19 @@ def test_status_texts() -> None:
     assert status_text(stale, T0, "UTC") == "STALE: NO ENGINE DATA"
     down = GaugeState(tank_gal=40.0, range_mi=600.0, updated=T0)
     assert status_text(down, T0 + timedelta(minutes=6), "UTC") == "STALE since 18:00"
+
+
+def test_fill_pending_is_shown_on_the_dash() -> None:
+    from bigair.display_render import status_text
+
+    g = gauge_from_dict(
+        {
+            "ts": "2026-11-20T18:00:00Z",
+            "tank_gal": 30.0,
+            "range_mi": 400.0,
+            "calibrating": True,
+            "fill_pending": True,
+        }
+    )
+    assert g.fill_pending
+    assert status_text(g, T0, "UTC") == "FILL PENDING · ANSWER ON PHONE"

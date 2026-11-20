@@ -31,6 +31,14 @@ class FillInput:
     price_per_gal: float | None
 
 
+@dataclass(frozen=True)
+class FillDecision:
+    """A reply to a detected-fill prompt that isn't a fill: ask again later, or not a fill."""
+
+    fill_id: str
+    action: str  # "later" | "skip"
+
+
 def parse_text(text: str) -> tuple[float, float | None]:
     """'22.4 4.19' → (22.4, 4.19); '22.4' → (22.4, None)."""
     cleaned = re.sub(r"(?i)gal(lons?)?|\$", " ", text).replace(",", ".")
@@ -50,15 +58,21 @@ def _check(value: float, lo: float, hi: float, what: str) -> float:
     return value
 
 
-def parse_response(raw: str) -> FillInput:
+def parse_response(raw: str) -> FillInput | FillDecision:
     try:
         d = json.loads(raw)
     except json.JSONDecodeError as e:
         raise ValueError(f"unreadable fill-up message: {e}") from e
     if not isinstance(d, dict):
         raise ValueError("unreadable fill-up message")
+    kind_raw = str(d.get("kind", "")).strip().lower()
+    if kind_raw in ("later", "skip"):
+        fid = str(d.get("fill_id") or "").strip()
+        if not fid:
+            raise ValueError("a later/skip reply needs the fill_id of the prompt")
+        return FillDecision(fid, kind_raw)
     try:
-        kind = FillType(str(d.get("kind", "")).strip().lower())
+        kind = FillType(kind_raw)
     except ValueError:
         raise ValueError("fill type must be full or partial") from None
     if "text" in d:

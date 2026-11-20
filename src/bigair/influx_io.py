@@ -153,7 +153,7 @@ def fuel_point(
     )
 
 
-def fill_up_point(fill: FillUp, result: FillResult) -> Point:
+def fill_up_point(fill: FillUp, result: FillResult | None) -> Point:
     """One fill-up in van_history; same fill_id + timestamp + tags overwrites (idempotent)."""
     total = (
         None
@@ -175,9 +175,9 @@ def fill_up_point(fill: FillUp, result: FillResult) -> Point:
             "odometer_mi": fill.odometer_mi,
             "lat": fill.lat,
             "lon": fill.lon,
-            "tank_before_gal": result.tank_before_gal,
-            "tank_after_gal": result.tank_after_gal,
-            "mpg_since_full": result.mpg_since_full,
+            "tank_before_gal": result.tank_before_gal if result else None,
+            "tank_after_gal": result.tank_after_gal if result else None,
+            "mpg_since_full": result.mpg_since_full if result else None,
             "fill_id": fill.fill_id,
         },
     )

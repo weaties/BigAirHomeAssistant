@@ -56,7 +56,17 @@ SETTLING ──(Δ below threshold, or vehicle moves before settling)──► D
   Δ, `odometer_mi`, GPS `lat`/`lon` (last fix while parked) and a timestamp.
 - Published on `bigair/fill_up/candidate`.
 
-## Prompt flow (HA, Companion app)
+## Prompt flow (HA, Companion app) — built (#11)
+
+Implementation: `fill_prompt.FillPrompter` (pure) handles prompts, re-prompts
+and expiry. It publishes on `bigair/fill_up/candidate` with an `attempt`
+count. The HA automation `bigair_fill_up_prompt` turns each message into a
+notification tagged with the `fill_id`, so a re-prompt replaces the earlier
+one. Reply action ids are `BIGAIR_FILL_<FULL|PARTIAL|LATER|SKIP>::<fill_id>`.
+A reply to a prompt becomes `source=live` at the candidate's timestamp.
+"Not a fill" and expired prompts are written as `status=skipped`. Pending
+prompts aren't persisted: after a restart, a reply to an old prompt is logged
+as a manual fill.
 
 1. An automation on `bigair/fill_up/candidate` sends an actionable
    notification ("Fill-up detected (~22 gal)"), carrying the `fill_id` in
@@ -121,9 +131,9 @@ the point, so it's idempotent.
 On `confirmed`: reset the counters (`/fuel-model`). Full → tank = capacity.
 Partial → tank = `tank_before_gal + gallons`. Compute `mpg_since_full` and
 the calibration ratio.
-While `pending`: the fuel model **provisionally** applies the level-estimated
-gallons and publishes `tank_estimated=true`, so range isn't wildly wrong
-before Dan answers.
+While `pending`: the tank is **not** changed (Decision #34, which superseded
+the provisional estimate). `fill_pending` is published, and HA and the dash
+show FILL PENDING. The answer is applied as of the detection time.
 
 ## Test cases the state machine must cover
 
