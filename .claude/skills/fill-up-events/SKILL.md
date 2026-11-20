@@ -79,11 +79,31 @@ SETTLING ──(Δ below threshold, or vehicle moves before settling)──► D
 4. CarPlay can't show these prompts (`docs/carplay.md`). Answer on the phone
    while parked.
 
-## Manual fallback
+## Manual logging (#12, built)
 
-`script.log_fill_up` is exposed in CarPlay Quick access and on the HA
-dashboard. It opens the same form. Python creates a `source=manual` fill
-with the current odometer and GPS. This path must not depend on detection.
+- **`script.log_fill_up`**, exposed in CarPlay Quick access and on the
+  dashboard, sends an actionable notification. Its Full and Partial actions
+  take a text reply (`22.4 4.19` = gallons, then price; the price is optional).
+  The action identifier carries the `fill_id` (`BIGAIR_FILL_FULL::manual-<ts>`).
+  An automation forwards the reply unchanged to `bigair/fill_up/response`.
+- **`script.submit_fill_up_form`** sends the dashboard form (helpers
+  `input_number.fill_up_gallons`, `input_number.fill_up_price_per_gal` and
+  `input_select.fill_up_type`) to the same topic, then clears it.
+- **bigair** (`fill_input.py`, `FuelService.handle_fill_response`):
+  - parses and validates: gallons 0.5–60, price 0.5–15 or blank; the form's 0
+    means not entered
+  - applies a `source=manual` fill as of now and saves state immediately
+  - writes a `fill_up` point
+  - replies on `bigair/fill_up/result` (retained) with what it logged or why
+    not. HA notifies the phone, and the "Last fill-up" sensor shows it.
+- **Repeats are ignored:** the same `fill_id`, or the same kind, gallons and
+  price within 10 min (a double-tap makes a new id).
+- **Fresh install:** a full fill starts the tank. A partial needs a known tank
+  first.
+- The phone's notify action is `!secret mobile_app_notify`, so it never
+  appears in the repo (a test enforces this). Odometer, lat and lon are blank
+  until the GPS logger (#14) feeds the service.
+- This path doesn't depend on detection.
 
 ## What is recorded (`fill_up`, bucket `van_history`)
 
