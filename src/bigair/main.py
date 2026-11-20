@@ -41,17 +41,14 @@ def _display(args: argparse.Namespace) -> int:
     return 0
 
 
-MIN_SANE_EPOCH = 1_793_491_200  # 2026-11-01Z: interim clock guard until #22
-
-
 def _run(args: argparse.Namespace) -> int:
     import asyncio
     import signal
-    import time
     from datetime import UTC, datetime
 
     from loguru import logger
 
+    from bigair.clock import kernel_clock_synced
     from bigair.influx_io import InfluxWriter
     from bigair.mqtt_io import run_mqtt
     from bigair.service import FuelService, ServiceConfig
@@ -71,7 +68,7 @@ def _run(args: argparse.Namespace) -> int:
             env.get("INFLUX_URL", "http://influxdb:8086"),
             org=env.get("INFLUX_ORG", "bigair"),
             token=token,
-            clock_ok=lambda: time.time() > MIN_SANE_EPOCH,
+            clock_ok=kernel_clock_synced,  # chrony via the kernel's sync flag (#22)
         )
         if token
         else None
@@ -103,8 +100,18 @@ def _run(args: argparse.Namespace) -> int:
             await asyncio.sleep(5)
 
     async def influx_flusher() -> None:
+        held = False
         while writer is not None:
             await asyncio.sleep(10)
+            synced = kernel_clock_synced()
+            if synced == held:  # log transitions only
+                held = not synced
+                if held:
+                    logger.warning(
+                        "clock not synced: holding Influx writes ({} buffered)", writer.pending
+                    )
+                else:
+                    logger.info("clock synced: writing {} buffered points", writer.pending)
             for point in svc.drain_points():  # fill-ups and other events
                 writer.add(point)
             try:
