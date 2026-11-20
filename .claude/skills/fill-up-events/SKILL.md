@@ -11,12 +11,18 @@ and parsing lives in Python. HA templates never decide anything.
 
 ## Prerequisite: a level signal
 
-Auto-detection needs a **VERIFIED** tank-level source, such as OBD `2F`, a
-Mercedes DID, or the aftermarket tank's sender read by an ESP32 ADC. None is
-verified yet (`docs/pid-register.md`). The stock sender may not reflect a
-47-gal tank, so any level source is used **only as a delta detector, never
-as the tank reading**. Without a level source, only the manual flow is
-available. That must work end-to-end on its own.
+Auto-detection needs a **VERIFIED** tank-level source. The van has **no
+aftermarket sender: the stock sender was moved to the 47-gal tank**
+(Decision #31). So the candidates are that sender's reading via OBD `2F`, a
+Mercedes DID or the cluster, or an ESP32 ADC on the sender wire. None is
+verified yet (`docs/pid-register.md`, #4).
+
+The stock sender was made for a different tank shape, so its reading is
+used **only as a delta detector, never as the tank reading**. Map it through
+a calibration table learned from fill-ups (sender reading before and after
+vs pump gallons and model gallons), and expect it to be non-linear and to
+saturate near full or empty. Without a level source, only the manual flow
+is available. That must work end-to-end on its own.
 
 ## Detection state machine
 

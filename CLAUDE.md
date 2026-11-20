@@ -384,3 +384,18 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     needs a reflash. Hard-won board rules (epdiy not LilyGo-EPD47, never
     `Wire.begin()`, always pass `--upload-port`) live in eink-screen's
     `AGENTS.md`. The ESPHome display config is deleted.
+30. **2026-11-19 — Tailscale on bigair-ha for remote access** (Dan's request).
+    It joins Dan's tailnet, installed by the bootstrap when `TAILSCALE_ENABLE=true`,
+    with Tailscale SSH on and **MagicDNS off** (`--accept-dns=false`), so Docker's
+    DNS and offline operation never depend on tailscaled. It's a convenience
+    only: nothing in the stack depends on it, and the van works fully offline
+    without it. The ESP32 devices (WiCAN, LilyGo) can't join a tailnet, so they
+    reach the Pi on the van LAN.
+31. **2026-11-19 — Van network and the fuel sender** (Dan). A router in the van
+    provides Wi-Fi **`bigair`**. The Pi, WiCAN, LilyGo and phone all join it,
+    and the Pi keeps its home Wi-Fi profile too. There's **no aftermarket level
+    sender: the stock sender was moved to the 47-gal tank**. Its reading, if
+    the ECU or cluster exposes it (UNVERIFIED, #4), is used only as a fill
+    *delta* detector, through a calibration table learned from fill-ups
+    (sender reading vs model gallons). It's never the tank level, because the
+    tank's shape differs from the one the sender was made for.
