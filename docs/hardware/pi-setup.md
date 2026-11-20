@@ -91,7 +91,9 @@ What it does, in order (each step is skipped if already done):
 
 **GPS:** set `GPS_BT_MAC` and `GPS_BT_CHANNEL` in `deploy/.env` after pairing
 the receiver, and the bootstrap sets up gpsd on the host and checks for a fix
-(`docs/hardware/gps-xgps160-trial.md`, step 6). With `GPS_BT_MAC` empty, it
+(`docs/hardware/gps-xgps160-trial.md`, step 6). It also points chrony at the
+GPS, so the clock stays right offline. Check with `chronyc sources`: `GPS` is
+listed, and it becomes the `*` reference when there's no internet. With `GPS_BT_MAC` empty, it
 skips GPS. The bigair service isn't started yet; it's a Compose profile that
 waits for the M1 services.
 
