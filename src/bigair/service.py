@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from bigair.signals import FillCandidate, ObdSample
 
 SILENT_WHILE_MOVING = timedelta(seconds=60)  # no samples this long after moving → stale
+VOLTAGE_MAX_AGE = timedelta(seconds=30)  # older van voltage isn't shown (WiCAN asleep)
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,14 @@ class FuelService:
             "stale": self.is_stale(now),
             "calibrating": not self.config.fuel_rate_verified,
             "mpg_spark": [round(v, 2) for v in self.trip.buckets],
+            "van_battery_v": self._fresh_battery_v(now),
         }
+
+    def _fresh_battery_v(self, now: datetime) -> float | None:
+        s = self.last_sample
+        if s is None or s.battery_v is None or now - s.ts > VOLTAGE_MAX_AGE:
+            return None
+        return s.battery_v
 
     def influx_points(self, now: datetime) -> list[Point]:
         points: list[Point] = []
@@ -174,6 +182,6 @@ class FuelService:
                     s.fuel_rate_gph if s else None,
                 )
             )
-        if s is not None and s.ignition:
+        if s is not None and (s.ignition or s.battery_v is not None):
             points.append(vehicle_point(s))
         return points

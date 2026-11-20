@@ -31,6 +31,7 @@ from bigair.display_render import (
     gauge_from_dict,
     pack_epd_4bit,
     render_gauge,
+    with_van_voltage,
 )
 
 if TYPE_CHECKING:
@@ -115,7 +116,9 @@ def make_server(
                 self._send(401, b"unauthorized\n", "text/plain")
                 return
             invert = parse_qs(url.query).get("invert", ["0"])[0] in ("1", "true")
-            img = render_gauge(state_fn(), datetime.now(UTC), tz=tz, debug=debug_fn())
+            state = state_fn()
+            debug = with_van_voltage(debug_fn(), state)
+            img = render_gauge(state, datetime.now(UTC), tz=tz, debug=debug)
             if url.path == "/api/display.png":
                 if invert:
                     img = img.point(lambda v: 255 - v)

@@ -43,6 +43,7 @@ class ObdSample:
     fuel_rate_gph: float | None
     odometer_mi: float | None = None
     fuel_level_pct: float | None = None
+    battery_v: float | None = None  # WiCAN's own ATRV reading at OBD pin 16
 
 
 @dataclass(frozen=True)

@@ -77,6 +77,7 @@ async def poll_samples(
                     logger.info("WiCAN connected at {}:{}", host, port)
                 started = asyncio.get_running_loop().time()
                 responses = {pid: await client.query("01" + pid) for pid in POLLED_PIDS}
+                responses["ATRV"] = await client.query("ATRV")
                 yield sample_from_responses(datetime.now(UTC), responses)
                 elapsed = asyncio.get_running_loop().time() - started
                 await asyncio.sleep(max(0.0, interval_s - elapsed))

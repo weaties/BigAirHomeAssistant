@@ -9,7 +9,7 @@ Pure functions: state + time in, image/bytes out. No I/O.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -32,6 +32,7 @@ class GaugeState:
     updated: datetime | None = None  # UTC time the fuel service wrote the feed
     stale: bool = False  # the service says its inputs stopped (moving, no data)
     calibrating: bool = False  # 5E not yet VERIFIED (Decision #32)
+    van_battery_v: float | None = None  # WiCAN ATRV, fresh only (debug strip)
 
 
 def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
@@ -53,6 +54,7 @@ def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
         updated=updated,
         stale=bool(d.get("stale", False)),
         calibrating=bool(d.get("calibrating", False)),
+        van_battery_v=num("van_battery_v"),
     )
 
 
@@ -93,6 +95,13 @@ def debug_from_dict(d: dict[str, Any]) -> DebugInfo:
         van_battery_v=num("van_battery_v"),
         uptime_s=num("uptime_s"),
     )
+
+
+def with_van_voltage(debug: DebugInfo | None, gauge: GaugeState) -> DebugInfo | None:
+    """Fill the debug strip's van voltage from the fuel service when the host has none."""
+    if debug is None or debug.van_battery_v is not None or gauge.van_battery_v is None:
+        return debug
+    return replace(debug, van_battery_v=gauge.van_battery_v)
 
 
 def debug_text(info: DebugInfo, now: datetime) -> str:
