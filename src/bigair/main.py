@@ -110,6 +110,8 @@ def _run(args: argparse.Namespace) -> int:
     async def influx_flusher() -> None:
         while writer is not None:
             await asyncio.sleep(10)
+            for point in svc.drain_points():  # fill-ups and other events
+                writer.add(point)
             try:
                 await asyncio.to_thread(writer.flush)
             except Exception as e:  # noqa: BLE001 — never let history kill the fuel loop
@@ -132,6 +134,7 @@ def _run(args: argparse.Namespace) -> int:
                     state_payload=lambda: svc.state_payload(datetime.now(UTC)),
                     on_command=lambda t, p: svc.handle_command(t, p, datetime.now(UTC)),
                     candidates=candidates,
+                    drain_outbox=svc.drain_outbox,
                 )
             ),
         ]

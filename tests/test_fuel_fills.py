@@ -221,3 +221,9 @@ def test_restored_model_treats_the_first_sample_as_a_new_baseline() -> None:
         )
     )
     assert restored.state.engine_used_gal == used
+
+
+def test_full_fill_with_no_miles_since_the_last_full_gives_no_mpg() -> None:
+    m = _model()
+    m.apply_fill(_fill(10, 3.0))
+    assert m.mpg_since_full is None

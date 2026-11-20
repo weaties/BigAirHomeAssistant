@@ -1,6 +1,16 @@
-# Fill-up form + manual fallback. Detection, parsing and validation live in
-# bigair (Python); HA only collects input. See /fill-up-events.
-# M0 scaffold: helpers and the manual script. Notification automations land in M1.
+# Fill-up logging (#12). HA only collects input and shows results; parsing,
+# validation, duplicate protection and the fuel model live in bigair (Python).
+# See /fill-up-events.
+#
+#   script.log_fill_up       → actionable notification on the phone. Reply under
+#                              Full or Partial with "gallons price", e.g. 22.4 4.19.
+#                              Add it to CarPlay Quick access in the Companion app.
+#   script.submit_fill_up_form → the dashboard form (helpers below).
+#   bigair/fill_up/result    → notification back with what was logged, or why not.
+#
+# The phone's notify action comes from secrets.yaml (mobile_app_notify), so the
+# device name never lands in this public repo.
+
 input_number:
   fill_up_gallons:
     name: Fill-up gallons
@@ -24,24 +34,81 @@ input_select:
       - full
       - partial
 
-input_text:
-  fill_up_pending_id:
-    name: Pending fill id
-    max: 64
-
 script:
   log_fill_up:
     alias: Log fill-up
     icon: mdi:gas-station
     description: >-
-      Submit the fill-up form. Exposed in CarPlay Quick access. bigair creates a
-      source=manual fill when no candidate is pending.
+      Ask on the phone for gallons and price (works from CarPlay Quick access).
+    sequence:
+      - variables:
+          fill_id: "manual-{{ now().timestamp() | int }}"
+      - action: !secret mobile_app_notify
+        data:
+          title: Log fill-up
+          message: "Reply under Full or Partial with gallons, then price — e.g. 22.4 4.19"
+          data:
+            tag: "{{ fill_id }}"
+            actions:
+              - action: "BIGAIR_FILL_FULL::{{ fill_id }}"
+                title: Full
+                behavior: textInput
+                textInputButtonTitle: Log
+                textInputPlaceholder: "22.4 4.19"
+              - action: "BIGAIR_FILL_PARTIAL::{{ fill_id }}"
+                title: Partial
+                behavior: textInput
+                textInputButtonTitle: Log
+                textInputPlaceholder: "10.5 4.19"
+
+  submit_fill_up_form:
+    alias: Submit fill-up form
+    icon: mdi:send
+    description: Send the fill-up form (gallons, price, full/partial) to bigair.
     sequence:
       - action: mqtt.publish
         data:
           topic: bigair/fill_up/response
           payload: >-
-            {"fill_id": "{{ states('input_text.fill_up_pending_id') }}",
+            {"fill_id": "form-{{ now().timestamp() | int }}",
              "kind": "{{ states('input_select.fill_up_type') }}",
              "gallons": {{ states('input_number.fill_up_gallons') | float(0) }},
              "price_per_gal": {{ states('input_number.fill_up_price_per_gal') | float(0) }}}
+      - action: input_number.set_value
+        target:
+          entity_id: [input_number.fill_up_gallons, input_number.fill_up_price_per_gal]
+        data:
+          value: 0
+
+automation:
+  - id: bigair_fill_up_reply
+    alias: Fill-up reply → bigair
+    description: Forward the phone's Full/Partial text reply to bigair as-is.
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.event.data.action is string
+             and trigger.event.data.action.startswith('BIGAIR_FILL_') }}
+    actions:
+      - action: mqtt.publish
+        data:
+          topic: bigair/fill_up/response
+          payload: >-
+            {{ {"fill_id": trigger.event.data.action.split('::')[1],
+                "kind": "full" if trigger.event.data.action.startswith('BIGAIR_FILL_FULL') else "partial",
+                "text": trigger.event.data.reply_text | default('')} | to_json }}
+
+  - id: bigair_fill_up_result
+    alias: Fill-up result → phone
+    description: Tell the phone what bigair logged, or why it didn't.
+    triggers:
+      - trigger: mqtt
+        topic: bigair/fill_up/result
+    actions:
+      - action: !secret mobile_app_notify
+        data:
+          title: "{{ 'Fill-up logged' if trigger.payload_json.ok else 'Fill-up not logged' }}"
+          message: "{{ trigger.payload_json.message }}"

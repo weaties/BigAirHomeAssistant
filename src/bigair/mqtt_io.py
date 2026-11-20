@@ -20,6 +20,8 @@ from loguru import logger
 
 from bigair.ha_discovery import (
     AVAILABILITY_TOPIC,
+    FILL_RESPONSE_TOPIC,
+    FILL_RESULT_TOPIC,
     FUEL_STATE_TOPIC,
     MANUAL_FILL_TOPIC,
     OFFLINE,
@@ -54,6 +56,7 @@ async def run_mqtt(
     state_payload: Callable[[], str],
     on_command: Callable[[str, bytes], object],
     candidates: asyncio.Queue[FillCandidate],
+    drain_outbox: Callable[[], list[tuple[str, str]]] = list,
     publish_every_s: float = 5.0,
     retry_s: float = 5.0,
 ) -> None:
@@ -66,6 +69,7 @@ async def run_mqtt(
                 for topic, payload in discovery_messages():
                     await client.publish(topic, payload, qos=1, retain=True)
                 await client.subscribe(MANUAL_FILL_TOPIC, qos=1)
+                await client.subscribe(FILL_RESPONSE_TOPIC, qos=1)
 
                 async def publisher(c: aiomqtt.Client = client) -> None:
                     while True:
@@ -77,6 +81,14 @@ async def run_mqtt(
                         cand = await candidates.get()
                         await c.publish(CANDIDATE_TOPIC, candidate_payload(cand), qos=1)
 
+                async def outbox_sender(c: aiomqtt.Client = client) -> None:
+                    while True:
+                        for topic, payload in drain_outbox():
+                            # Fill results are retained so HA's "Last fill-up" survives restarts.
+                            retain = topic == FILL_RESULT_TOPIC
+                            await c.publish(topic, payload, qos=1, retain=retain)
+                        await asyncio.sleep(0.5)
+
                 async def commands(c: aiomqtt.Client = client) -> None:
                     async for message in c.messages:
                         raw = message.payload
@@ -87,6 +99,7 @@ async def run_mqtt(
                     async with asyncio.TaskGroup() as tg:
                         tg.create_task(publisher())
                         tg.create_task(candidate_sender())
+                        tg.create_task(outbox_sender())
                         tg.create_task(commands())
                 except asyncio.CancelledError:
                     # A clean disconnect never triggers the will, so say offline

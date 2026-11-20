@@ -33,7 +33,7 @@ major Companion release. These pages carry no last-updated date.
 
 | Need | CarPlay mechanism | Status |
 |---|---|---|
-| Log a fill-up manually | `script.log_fill_up` in Quick access (opens the phone prompt flow) | M1 |
+| Log a fill-up manually | `script.log_fill_up` in Quick access → actionable notification on the phone (reply under Full/Partial with `22.4 4.19`) | Built (#12). Add it under Companion app → Settings → CarPlay → Quick access |
 | Heater on/off | `switch`/`climate` for the Webasto (W-Bus node) | M2 |
 | "What's my range?" | Assist custom sentence answering from `sensor.range_mi` | UNVERIFIED: needs Assist working offline in the van (local STT/TTS) |
 | Fuel/range at a glance | Not possible in CarPlay. Use the **dash display** (`/dash-display`). | — |
