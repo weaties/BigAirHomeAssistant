@@ -99,7 +99,7 @@ def track_point(fix: GpsFix, mpg_30s: float | None = None, trip_id: str | None =
     return Point(
         "track",
         fix.ts,
-        tags={"source": "gps_usb"},
+        tags={"source": "gps_bt"},  # XGPS160 over Bluetooth (Decision #28)
         fields={
             "lat": fix.lat,
             "lon": fix.lon,
