@@ -290,7 +290,9 @@ health() {
       *) warn "GPS: no fix from gpsd (mode='${mode:-none}'). Receiver on? See docs/hardware/gps-xgps160-trial.md"; ok=0 ;;
     esac
     local reach ref
-    reach="$(chronyc -n sources 2>/dev/null | awk '$2 == "GPS" {print $4}')"
+    # `chronyc sources` columns: MS Name Stratum Poll Reach … — reach is $5 (octal
+    # shift register of the last 8 polls), not $4 (poll interval).
+    reach="$(chronyc -n sources 2>/dev/null | awk '$2 == "GPS" {print $5}')"
     ref="$(chronyc -n tracking 2>/dev/null | sed -n 's/^Reference ID *: //p')"
     if [[ -n "$reach" && "$reach" != "0" ]]; then
       echo "chrony: GPS refclock receiving (reach $reach); clock reference: $ref"
