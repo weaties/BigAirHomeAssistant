@@ -85,6 +85,9 @@ network. Integrations added in the UI create config entries in
 `.storage/core.config_entries`. Remove unneeded ones in **Settings →
 Devices & services**, or via HA's REST API with a token, never by editing
 `.storage` by hand: the registry format changes between releases.
+Expected entries: `mqtt`, `mobile_app`, plus `analytics`, `backup` and
+`marketplace`, which HA core always loads and re-creates (Decision #27).
+Don't chase those three.
 
 ## Local and offline
 

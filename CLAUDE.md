@@ -347,3 +347,9 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     lists only frontend, history, logbook, mobile_app and system_health, and
     every addition names the feature that needs it. Bluetooth comes back in M3
     (Victron); leaving it out meanwhile frees the radio for the XGPS160 trial.
+    The 20 auto-added config entries were deleted via HA's REST API, leaving
+    only `mqtt` and `mobile_app`. Three always return, because HA core loads
+    them unconditionally (`bootstrap.DEFAULT_INTEGRATIONS` in 2026.11):
+    `analytics` (never opted in, sends nothing), `backup` (no schedule) and
+    `marketplace`. They're inert, and removing them would mean patching HA,
+    so leave them.
