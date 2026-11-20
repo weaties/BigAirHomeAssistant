@@ -35,6 +35,19 @@ device class and availability in one place, in Python, next to the logic.
 Availability uses a bigair LWT topic, so HA shows "unavailable" when bigair
 dies.
 
+Built in `src/bigair/ha_discovery.py`:
+- **Topics:** availability `bigair/status` (`online`/`offline`). The MQTT
+  edge sets the will to `offline`, retained. State goes to
+  `bigair/fuel/state`, retained JSON whose keys match the sensors'
+  `object_id`s, plus `ts` and `stale`.
+- **Entities:** sensors `tank_gal`, `range_mi`, `mpg_rolling`,
+  `mpg_instant_30s` and `mpg_since_full`, plus the binary sensor
+  `fuel_stale` (device class `problem`), all on one "BigAir van" device.
+- **Staleness:** tank and range carry a second availability entry on the
+  state topic, so they show **unavailable while stale**, not a confident old
+  number.
+- **Unknowns:** a null value renders as "None", which HA treats as unknown.
+
 WiCAN raw values: until the WiCAN AutoPID's own HA discovery is verified,
 HA doesn't need them. bigair consumes the raw topics and publishes clean,
 unit-converted sensors.
