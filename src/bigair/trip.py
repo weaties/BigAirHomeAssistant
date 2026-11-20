@@ -36,6 +36,7 @@ class TripMpg:
         self._trip_miles = 0.0
         self._trip_gal = 0.0
         self._last: ObdSample | None = None  # last ignition-on sample with speed and rate
+        self.trip_id: str | None = None  # UTC start of the current trip, e.g. 2026-11-21T15:00Z
 
     @property
     def buckets(self) -> tuple[float, ...]:
@@ -55,11 +56,13 @@ class TripMpg:
             return
         last, self._last = self._last, sample
         if last is None:
+            self.trip_id = sample.ts.strftime("%Y-%m-%dT%H:%MZ")
             return
         gap = sample.ts - last.ts
         if gap > self.new_trip_after:
             self._buckets.clear()
             self._miles = self._gal = self._trip_miles = self._trip_gal = 0.0
+            self.trip_id = sample.ts.strftime("%Y-%m-%dT%H:%MZ")
             return
         dt = gap.total_seconds()
         if dt <= 0 or dt > MAX_STEP_S:

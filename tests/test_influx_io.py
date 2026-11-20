@@ -91,7 +91,7 @@ def test_buckets() -> None:
 def test_track_point() -> None:
     fix = GpsFix(ts=TS, lat=39.5, lon=-111.0, speed_mph=60.0, alt_m=1500.0, hdop=0.9)
     assert to_line(track_point(fix, mpg_30s=15.5)) == (
-        f"track,source=gps_usb lat=39.5,lon=-111.0,alt_m=1500.0,speed_mph=60.0,"
+        f"track,source=gps_bt lat=39.5,lon=-111.0,alt_m=1500.0,speed_mph=60.0,"
         f"hdop=0.9,mpg_30s=15.5 {TS_MS}"
     )
 

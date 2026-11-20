@@ -97,9 +97,13 @@ services:
     command: ["uv", "run", "--no-sync", "bigair", "run"]
     depends_on: [mosquitto, influxdb]
     env_file: .env
+    # Host networking (Decision #35): gpsd listens on the host's localhost only, and
+    # Mosquitto/InfluxDB publish their ports on the host anyway.
+    network_mode: host
     environment:
-      MQTT_HOST: mosquitto
-      INFLUX_URL: http://influxdb:8086
+      MQTT_HOST: localhost
+      INFLUX_URL: http://localhost:8086
+      GPSD_HOST: 127.0.0.1
       BIGAIR_STATE_FILE: /data/fuel_state.json
       BIGAIR_GAUGE_FILE: /feed/gauge.json
     volumes:

@@ -20,13 +20,14 @@ from bigair.fill_detect import FillDetector, FillDetectorConfig
 from bigair.fill_input import FillDecision, FillInput, parse_response
 from bigair.fill_prompt import FillPrompter
 from bigair.fuel_model import FuelModel, FuelModelConfig
+from bigair.gps_logger import TrackRecorder
 from bigair.ha_discovery import (
     FILL_RESPONSE_TOPIC,
     FILL_RESULT_TOPIC,
     MANUAL_FILL_TOPIC,
     fuel_state_payload,
 )
-from bigair.influx_io import fill_up_point, fuel_point, vehicle_point
+from bigair.influx_io import fill_up_point, fuel_point, track_point, vehicle_point
 from bigair.signals import FillSource, FillStatus, FillType, FillUp, FuelState
 from bigair.state_file import StateFileError, StateSaver, read_state
 from bigair.trip import TripMpg
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bigair.influx_io import Point
-    from bigair.signals import FillCandidate, ObdSample
+    from bigair.signals import FillCandidate, GpsFix, ObdSample
 
 SILENT_WHILE_MOVING = timedelta(seconds=60)  # no samples this long after moving → stale
 DUPLICATE_WINDOW = timedelta(minutes=10)  # same fill numbers again this soon = double tap
@@ -83,6 +84,8 @@ class FuelService:
         self._points: deque[Point] = deque()  # event points for Influx (fill-ups)
         self._last_input: tuple[FillInput, datetime] | None = None
         self.prompter = FillPrompter()
+        self.track = TrackRecorder()
+        self.last_fix: GpsFix | None = None
 
     @property
     def model_config(self) -> FuelModelConfig:
@@ -111,7 +114,7 @@ class FuelService:
     def handle_sample(self, sample: ObdSample) -> FillCandidate | None:
         self.last_sample = sample
         self.trip.update(sample)
-        candidate = self.detector.update(sample)
+        candidate = self.detector.update(sample, self.last_fix)
         if self.model is not None:
             self.model.update(sample)
             self.saver.save(self.model.snapshot(), sample.ts)
@@ -122,6 +125,14 @@ class FuelService:
         for skipped in self.prompter.drain_skipped():
             self._points.append(fill_up_point(_skipped_fill(skipped), None))
         return candidate
+
+    def handle_fix(self, fix: GpsFix) -> Point | None:
+        """Every GPS fix; returns a track point when one is due (#14)."""
+        self.last_fix = fix
+        if not self.track.keep(fix):
+            return None
+        mpg = self.model.mpg_instant_30s if self.model is not None else None
+        return track_point(fix, mpg_30s=mpg, trip_id=self.trip.trip_id)
 
     def handle_manual_full(self, now: datetime) -> None:
         """'Filled to full' from HA: seed the tank on a fresh install, else a full fill."""

@@ -129,7 +129,8 @@ src/bigair/          # all Python; one small module per concern
   state_file.py      #   atomic, fsync'd state file (fuel model's durable state)
   fill_detect.py     #   fill-up detection state machine (Critical)
   heater.py          #   Webasto fuel accounting (Critical)
-  gps_logger.py      #   gpsd → track points
+  gps_logger.py      #   gpsd TPV → GpsFix, track-point cadence
+  gpsd_io.py         #   edge: gpsd JSON client
   mqtt_io.py / influx_io.py   # edges (M1)
   main.py            #   wiring only
 tests/               # pytest, runs anywhere, no hardware
@@ -182,7 +183,7 @@ tag with trip IDs, prices, coordinates or free text.
 | `heater` | raw | `method` (wbus_pulses, runtime_datasheet, current) | `running`, `power_level`, `pump_hz`, `fuel_gph`, `used_gal` |
 | `electrical` | raw | `device` (bmv700, mppt, dcdc, shore) | `voltage_v`, `current_a`, `power_w`, `soc_pct` |
 | `load` | raw | `circuit` (fan, webasto, lights, internet, inverter, pi) | `current_a`, `voltage_v`, `power_w` |
-| `track` | history | `source` (gps_usb) | `lat`, `lon`, `alt_m`, `speed_mph`, `heading_deg`, `mpg_30s`, `hdop`, `trip_id` |
+| `track` | history | `source` (gps_bt) | `lat`, `lon`, `alt_m`, `speed_mph`, `heading_deg`, `mpg_30s`, `hdop`, `trip_id` |
 | `fill_up` | history | `source` (live, manual, historical), `fill_type` (full, partial), `status` (confirmed, pending, skipped) | `gallons`, `price_per_gal`, `total_cost`, `odometer_mi`, `lat`, `lon`, `tank_before_gal`, `tank_after_gal`, `mpg_since_full`, `fill_id` |
 | `trip` | history | — | `distance_mi`, `fuel_gal`, `mpg`, `duration_s`, `idle_s`, `cruise_share`, `brake_events`, `trip_id` |
 
@@ -374,8 +375,8 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     chrony's SHM refclock (#22) both live on the host, so gpsd does too: the
     Debian package with `-b -n`. **`-b` (read-only) is required**, because
     gpsd's default probing makes the RFCOMM link return I/O errors. The MAC
-    lives only in `deploy/.env`. gpsd listens on localhost; how bigair's
-    container reaches it is decided in #14.
+    lives only in `deploy/.env`. gpsd listens on localhost; bigair reaches it
+    with host networking (Decision #35).
 29. **2026-11-19 — Dash display: eink-screen firmware + server-rendered
     frame** (Dan's choice; supersedes #17). The board is a **LilyGo T5 ePaper
     S3 PRO** (ESP32-S3, 4.7" 960×540 16-grey parallel e-paper, touch, LoRa,
@@ -430,4 +431,11 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     the dash show **FILL PENDING**. When he answers, the fill is applied as of
     the detection time, so nothing is lost. Revisit once the level table is
     learned from real fills.
+35. **2026-11-21 — The bigair service uses host networking** (decides #14's open
+    question from Decision #28). gpsd listens only on the host's localhost, which
+    is the safe default since it's unauthenticated, and Mosquitto and InfluxDB
+    already publish their ports on the host. With `network_mode: host`, bigair
+    reaches gpsd, MQTT (`localhost:1883`) and InfluxDB (`localhost:8086`) like
+    Home Assistant does, so gpsd never listens on the LAN. The display container
+    stays on the Compose network; it only reads the shared gauge-feed volume.
 

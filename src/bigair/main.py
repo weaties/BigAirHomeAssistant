@@ -49,6 +49,7 @@ def _run(args: argparse.Namespace) -> int:
     from loguru import logger
 
     from bigair.clock import kernel_clock_synced
+    from bigair.gpsd_io import gpsd_fixes
     from bigair.influx_io import InfluxWriter
     from bigair.mqtt_io import run_mqtt
     from bigair.service import FuelService, ServiceConfig
@@ -99,6 +100,14 @@ def _run(args: argparse.Namespace) -> int:
                 logger.warning("gauge feed write failed: {}", e)
             await asyncio.sleep(5)
 
+    async def gps() -> None:
+        async for fix in gpsd_fixes(
+            env.get("GPSD_HOST", "127.0.0.1"), int(env.get("GPSD_PORT", "2947"))
+        ):
+            point = svc.handle_fix(fix)
+            if point is not None and writer is not None:
+                writer.add(point)
+
     async def influx_flusher() -> None:
         held = False
         while writer is not None:
@@ -126,6 +135,7 @@ def _run(args: argparse.Namespace) -> int:
             loop.add_signal_handler(sig, stop.set)
         tasks = [
             asyncio.create_task(ingest()),
+            asyncio.create_task(gps()),
             asyncio.create_task(influx_flusher()),
             asyncio.create_task(gauge_writer()),
             asyncio.create_task(
