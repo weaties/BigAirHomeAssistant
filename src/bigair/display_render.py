@@ -9,7 +9,7 @@ Pure functions: state + time in, image/bytes out. No I/O.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -32,6 +32,7 @@ class GaugeState:
     updated: datetime | None = None  # UTC time the fuel service wrote the feed
     stale: bool = False  # the service says its inputs stopped (moving, no data)
     calibrating: bool = False  # 5E not yet VERIFIED (Decision #32)
+    van_battery_v: float | None = None  # WiCAN ATRV, fresh only (debug strip)
 
 
 def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
@@ -53,6 +54,7 @@ def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
         updated=updated,
         stale=bool(d.get("stale", False)),
         calibrating=bool(d.get("calibrating", False)),
+        van_battery_v=num("van_battery_v"),
     )
 
 
@@ -95,6 +97,13 @@ def debug_from_dict(d: dict[str, Any]) -> DebugInfo:
     )
 
 
+def with_van_voltage(debug: DebugInfo | None, gauge: GaugeState) -> DebugInfo | None:
+    """Fill the debug strip's van voltage from the fuel service when the host has none."""
+    if debug is None or debug.van_battery_v is not None or gauge.van_battery_v is None:
+        return debug
+    return replace(debug, van_battery_v=gauge.van_battery_v)
+
+
 def debug_text(info: DebugInfo, now: datetime) -> str:
     """One status line, e.g. "PI 5.01V OK | VAN 14.2V | UP 12m"."""
     age = (now - info.updated).total_seconds()
@@ -127,6 +136,16 @@ def is_stale(state: GaugeState, now: datetime, max_age: timedelta = STALE_AFTER)
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default(size=size)
+
+
+def fit_font(
+    draw: ImageDraw.ImageDraw, text: str, *, max_width: float, start: int, smallest: int = 20
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Largest font from `start` down whose rendering of `text` fits `max_width`."""
+    size = start
+    while size > smallest and draw.textlength(text, font=_font(size)) > max_width:
+        size -= 2
+    return _font(size)
 
 
 def _local(ts: datetime, tz: str) -> str:
@@ -212,7 +231,9 @@ def render_gauge(
     else:
         # Drive-testing mode: the debug strip takes the sparkline's place.
         draw.rectangle((20, 375, WIDTH - 20, 485), outline=BLACK, width=3)
-        draw.text((40, 395), debug_text(debug, now), font=_font(40), fill=BLACK)
+        line = debug_text(debug, now)
+        font = fit_font(draw, line, max_width=WIDTH - 80, start=40)
+        draw.text((40, 395), line, font=font, fill=BLACK)
         draw.text((40, 445), f"debug @ {_local(debug.updated, tz)}", font=_font(28), fill=GREY)
 
     # Footer: local clock + status.

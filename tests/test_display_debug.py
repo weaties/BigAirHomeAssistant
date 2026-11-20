@@ -107,3 +107,23 @@ def test_file_reader_returns_none_without_a_usable_file(tmp_path: object) -> Non
     path.write_text('{"ts": "2026-11-20T17:29:57Z", "pi_5v_v": 5.0, "throttled": "0x0"}')
     info = read()
     assert info is not None and info.pi_5v_v == 5.0
+
+
+def test_longest_debug_line_fits_the_panel() -> None:
+    from PIL import Image, ImageDraw
+
+    from bigair.display_render import WIDTH, fit_font
+
+    worst = debug_text(
+        _info(
+            updated=NOW - timedelta(seconds=999),
+            pi_5v_v=4.71,
+            undervolt_now=True,
+            van_battery_v=12.9,
+            uptime_s=99 * 3600,
+        ),
+        NOW,
+    )
+    draw = ImageDraw.Draw(Image.new("L", (WIDTH, 100)))
+    font = fit_font(draw, worst, max_width=WIDTH - 80, start=40)
+    assert draw.textlength(worst, font=font) <= WIDTH - 80

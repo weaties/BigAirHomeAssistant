@@ -8,6 +8,9 @@ Only signals in docs/pid-register.md are decoded:
   comparison verifies it.
 - `2F` fuel level: RESPONDS. Stock sender, a fill-up delta detector only
   (Decision #31), never shown as the tank reading.
+- `ATRV`: the WiCAN's own battery-voltage reading (an adapter command, not a
+  vehicle PID). RESPONDS: 14.1–14.2 V with the engine running; not yet checked
+  against a multimeter. Used for power debugging and history only.
 
 Pure functions: raw response text in, unit-suffixed values out.
 """
@@ -54,6 +57,20 @@ def payload(raw: str, pid: str) -> bytes | None:
         except ValueError:
             return None
     return None
+
+
+ADAPTER_V_RANGE = (5.0, 20.0)  # anything outside is a garbled reply, not a 12 V system
+
+
+def decode_adapter_volts(raw: str) -> float | None:
+    """`ATRV` reply like "14.2V" → volts, or None."""
+    text = raw.strip().upper().rstrip("V").strip()
+    try:
+        v = float(text)
+    except ValueError:
+        return None
+    lo, hi = ADAPTER_V_RANGE
+    return v if lo <= v <= hi else None
 
 
 def _need(data: bytes, n: int, pid: str) -> None:
@@ -104,6 +121,7 @@ def sample_from_responses(ts: datetime, responses: dict[str, str]) -> ObdSample:
     speed = _value(responses.get("0D"), "0D")
     rate_gph = _value(responses.get("5E"), "5E")
     level = _value(responses.get("2F"), "2F")
+    # The adapter answers ATRV even with the ECU asleep, so it never implies ignition.
     ignition = any(v is not None for v in (speed, rate_gph, level))
     return ObdSample(
         ts=ts,
@@ -111,4 +129,5 @@ def sample_from_responses(ts: datetime, responses: dict[str, str]) -> ObdSample:
         speed_mph=speed,
         fuel_rate_gph=rate_gph,
         fuel_level_pct=level,
+        battery_v=decode_adapter_volts(responses.get("ATRV", "")),
     )

@@ -117,7 +117,11 @@ def vehicle_point(sample: ObdSample) -> Point:
         "vehicle",
         sample.ts,
         tags={"source": "wican"},
-        fields={"speed_mph": sample.speed_mph, "odometer_mi": sample.odometer_mi},
+        fields={
+            "speed_mph": sample.speed_mph,
+            "odometer_mi": sample.odometer_mi,
+            "battery_v": sample.battery_v,
+        },
     )
 
 

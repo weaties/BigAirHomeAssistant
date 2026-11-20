@@ -94,3 +94,12 @@ async def test_poll_keeps_retrying_while_the_adapter_sleeps() -> None:
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(anext(samples), 0.2)
     await samples.aclose()
+
+
+async def test_poll_reads_the_adapter_battery_voltage(fake: FakeElm) -> None:
+    fake.answers["ATRV"] = "14.2V"
+    port = await fake.start()
+    samples = poll_samples("127.0.0.1", port, interval_s=0.01)
+    s = await anext(samples)
+    await samples.aclose()
+    assert s.battery_v == pytest.approx(14.2)
