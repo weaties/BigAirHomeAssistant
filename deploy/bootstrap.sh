@@ -167,6 +167,45 @@ gps_host() {
   fi
 }
 
+tailscale_host() {
+  log "Tailscale (Decision #30)"
+  if [[ "$(env_get TAILSCALE_ENABLE)" != "true" ]]; then
+    echo "TAILSCALE_ENABLE is not true in deploy/.env — skipping."
+    return
+  fi
+  if ! command -v tailscale >/dev/null; then
+    local codename
+    # shellcheck disable=SC1091  # /etc/os-release exists only on the Pi
+    codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+    sudo curl -fsSL "https://pkgs.tailscale.com/stable/debian/$codename.noarmor.gpg" \
+      -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+    sudo curl -fsSL "https://pkgs.tailscale.com/stable/debian/$codename.tailscale-keyring.list" \
+      -o /etc/apt/sources.list.d/tailscale.list
+    sudo apt-get update -qq
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tailscale >/dev/null
+  fi
+  sudo systemctl enable --now tailscaled >/dev/null 2>&1
+  local state
+  state="$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "Unknown"' || echo Unknown)"
+  if [[ "$state" == "Running" ]]; then
+    echo "Tailscale: up as $(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')"
+    return
+  fi
+  local authkey
+  authkey="$(env_get TAILSCALE_AUTHKEY)"
+  # --accept-dns=false: the van must work offline and Docker's DNS must not depend
+  # on tailscaled (MagicDNS would rewrite /etc/resolv.conf). Tailscale is remote
+  # access only; nothing in the stack depends on it.
+  if [[ -n "$authkey" ]]; then
+    sudo tailscale up --ssh --accept-dns=false --hostname "$(hostname)" --authkey "$authkey"
+    echo "Tailscale: joined with the auth key from deploy/.env"
+  else
+    echo "Tailscale installed but not logged in (state: $state). Join your tailnet with:"
+    echo "  sudo tailscale up --ssh --accept-dns=false --hostname $(hostname)"
+    echo "and open the login URL it prints (or set TAILSCALE_AUTHKEY in deploy/.env)."
+  fi
+}
+
 start_core() {
   log "Starting Mosquitto, Home Assistant, InfluxDB"
   "${COMPOSE[@]}" up -d mosquitto homeassistant influxdb
@@ -323,6 +362,7 @@ install_packages
 docker_log_limits
 secrets
 gps_host
+tailscale_host
 start_core
 provision_influx
 start_grafana

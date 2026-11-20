@@ -114,19 +114,39 @@ to `http://bigair-ha.local:8123` while on the same Wi-Fi.
 cd ~/BigAirHomeAssistant && git pull && ./deploy/bootstrap.sh
 ```
 
-## Adding the van's Wi-Fi later
+## The van Wi-Fi (`bigair`)
 
-The van network isn't decided yet, and the bootstrap never touches
-networking. When it is, add it alongside home Wi-Fi so the Pi joins whichever
-is in range:
+A router in the van provides SSID **`bigair`** (CLAUDE.md Decision #31). The
+Pi keeps both profiles; the bootstrap never touches networking. Save the van
+profile **without switching to it** (works even when the router is off):
 
 ```bash
-sudo nmcli dev wifi connect "<van-ssid>" password "<password>"
-nmcli connection show            # both networks saved; NetworkManager auto-connects
+sudo nmcli connection add type wifi ifname wlan0 con-name bigair ssid bigair \
+  wifi-sec.key-mgmt wpa-psk wifi-sec.psk '<password>' \
+  connection.autoconnect yes connection.autoconnect-priority 10
+nmcli -f NAME,AUTOCONNECT,AUTOCONNECT-PRIORITY connection show
 ```
 
-If the Pi itself becomes the hotspot, that's a separate, deliberate change.
-It's recorded as a CLAUDE.md Decision when made.
+Priority 10 makes `bigair` win when both networks are in range at
+(re)connect, so everything is on the van network together (WiCAN, LilyGo,
+phone). NetworkManager doesn't roam away from a working connection on its
+own. To move now: `sudo nmcli connection up bigair`.
+
+The password lives only in NetworkManager on the Pi and in eink-screen's
+gitignored `config.h`. Never put it in this repo, which is public.
+
+## Tailscale (remote access)
+
+Set `TAILSCALE_ENABLE=true` in `deploy/.env` and run the bootstrap. It
+installs Tailscale and, without `TAILSCALE_AUTHKEY`, prints the command to
+log in:
+
+```bash
+sudo tailscale up --ssh --accept-dns=false --hostname bigair-ha   # opens a login URL
+```
+
+MagicDNS is off on purpose (Decision #30): Docker's DNS and offline running
+must not depend on tailscaled.
 
 ## Moving from SD card to SSD (before the van install)
 
