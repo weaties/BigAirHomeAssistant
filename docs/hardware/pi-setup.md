@@ -89,9 +89,11 @@ What it does, in order (each step is skipped if already done):
 8. **Health checks:** both dashboards present, both datasources healthy,
    Mosquitto answering, Home Assistant up.
 
-gpsd and the bigair service are **not** started yet. They're Compose profiles
-that wait for the GPS (issue #22, `docs/hardware/gps-xgps160-trial.md`) and
-the M1 services.
+**GPS:** set `GPS_BT_MAC` and `GPS_BT_CHANNEL` in `deploy/.env` after pairing
+the receiver, and the bootstrap sets up gpsd on the host and checks for a fix
+(`docs/hardware/gps-xgps160-trial.md`, step 6). With `GPS_BT_MAC` empty, it
+skips GPS. The bigair service isn't started yet; it's a Compose profile that
+waits for the M1 services.
 
 ## 4. After the bootstrap (in a browser)
 

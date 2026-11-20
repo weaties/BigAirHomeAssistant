@@ -2,8 +2,12 @@
 
 Dan already owns a Dual XGPS160. Before buying a USB receiver, find out whether
 it can be the van's GPS (track points every 5 s) and clock source (chrony via
-gpsd, CLAUDE.md Decision #24 and issue #22). **Status: UNVERIFIED.** Nothing
-below has been run on the Pi yet.
+gpsd, CLAUDE.md Decision #24 and issue #22).
+
+**Status (2026-11-19): adopted** (CLAUDE.md Decision #28). Steps 1–4 and
+robustness tests 5a (Pi reboot) and 5b (receiver power cycle) passed on the
+Pi; results are in `docs/scans/2026-11-19-xgps160-trial.md`. Tests 5d–f are
+still open.
 
 ## What we know going in
 
@@ -74,9 +78,16 @@ sudo cat /dev/rfcomm0          # Ctrl-C after a few seconds
 ### 4. gpsd and a real fix
 
 ```bash
-sudo gpsd -N -D2 -n /dev/rfcomm0      # foreground, debug level 2
-cgps                                   # in a second terminal
+sudo /usr/sbin/gpsd -N -D2 -b -n /dev/rfcomm0   # foreground, debug level 2
+cgps                                             # in a second terminal
 ```
+
+**Use `-b` (read-only).** Without it, gpsd probes the device with writes,
+flushes and baud changes, and the RFCOMM link answers with
+`gpsd_flush … Input/output error` and `tcdrain() failed`. No data reaches
+clients. With `-b`, there are no errors. Also note: `gpsd` is in `/usr/sbin`
+(not on a normal user's PATH), and stop any earlier gpsd before starting
+another (`sudo pkill -x gpsd`).
 
 **Pass:** `cgps` shows a 3D fix with a plausible lat/lon. Watch out for a fix
 "mode 3D" alongside lat/lon 0.0, which is the failure reported for some USB
@@ -95,30 +106,18 @@ Run each one and record pass/fail:
 | e | Clock: chrony with gpsd SHM refclock (issue #22), Pi offline | `chronyc sources` selects GPS; offset < 100 ms |
 | f | Drive with it on the dash | Continuous track, sane speed vs dash |
 
-### 6. Make it permanent (only if 1–5 pass)
+### 6. Make it permanent
 
-The binding has to exist before the gpsd container starts, because Compose
-maps the device at container start. Sketch of a host unit (**untested**):
+gpsd runs on the Pi host (CLAUDE.md Decision #28), set up by the bootstrap:
 
-```ini
-# /etc/systemd/system/rfcomm-gps.service
-[Unit]
-Description=Bind XGPS160 SPP to /dev/rfcomm0
-After=bluetooth.service
-Requires=bluetooth.service
-Before=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/bin/rfcomm bind 0 <MAC> <N>
-ExecStop=/usr/bin/rfcomm release 0
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then set `GPS_DEVICE=/dev/rfcomm0` in `deploy/.env`.
+1. Pair once (step 1). Then stop any hand-started gpsd and release the
+   manual binding: `sudo pkill -x gpsd; sudo rfcomm release 0`.
+2. In `deploy/.env` on the Pi, set `GPS_BT_MAC=<MAC>` and
+   `GPS_BT_CHANNEL=<N>`. The MAC stays on the Pi, never in git.
+3. Run `./deploy/bootstrap.sh`. It installs `gpsd`/`gpsd-clients` and
+   `deploy/host/rfcomm-gps.service` (binds `/dev/rfcomm0` at boot), plus
+   `deploy/host/gpsd.default` → `/etc/default/gpsd` (`-b -n`) and a drop-in
+   ordering gpsd after the binding. Its health check reports the fix mode.
 
 ## Record the result
 

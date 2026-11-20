@@ -71,7 +71,7 @@ DIDs as hints for what to look for, never as values to copy.
 | Device | Signal | Source | Status | Evidence | Notes |
 |---|---|---|---|---|---|
 | WiCAN | model (OBD or PRO), firmware | label / web UI | UNVERIFIED | — | PRO adds KWP/MS-CAN and better ELM support |
-| GPS receiver | model, NMEA rate | `gpsd` | UNVERIFIED | — | Candidate: Dan's Dual XGPS160 over Bluetooth SPP; trial in `docs/hardware/gps-xgps160-trial.md`. Fallback: u-blox M8 USB with an active antenna. |
+| GPS receiver | Dual XGPS160, Bluetooth SPP ch 1, NMEA 10 Hz, GPS+GLONASS | host `gpsd -b -n` on `/dev/rfcomm0` | RESPONDS | `docs/scans/2026-11-19-xgps160-trial.md` | Adopted (Decision #28). Reboot test passed. VERIFIED after the 24 h and drive tests. Fallback: u-blox M8 USB with an active antenna. |
 | Webasto Air Top | variant, part number | heater label | UNVERIFIED | — | Burn rates come from that variant's datasheet |
 | Webasto | W-Bus pump pulse volume | datasheet / bench | UNVERIFIED | — | `/heater-accounting` |
 | Victron BMV-700 | VE.Direct fields | VE.Direct | UNVERIFIED | — | `/electrical` |

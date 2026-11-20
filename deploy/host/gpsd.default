@@ -1,0 +1,10 @@
+# Installed by deploy/bootstrap.sh as /etc/default/gpsd (read by Debian's gpsd.service).
+# -b  read-only: never write to the device. Without it, gpsd's baud/flush probing
+#     makes the Bluetooth RFCOMM link return I/O errors (seen on the XGPS160).
+# -n  open the device at start, not on first client, so the fix is warm for chrony.
+# gpsd listens on localhost:2947 only. Clients in containers need host networking
+# or an explicit decision to widen that (issue #14).
+START_DAEMON="true"
+USBAUTO="false"
+DEVICES="/dev/rfcomm0"
+GPSD_OPTIONS="-b -n"

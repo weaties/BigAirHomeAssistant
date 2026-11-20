@@ -10,8 +10,9 @@
 # are never printed.
 #
 # Steps: preflight → packages (Docker, git, jq, chrony) → Docker log limits →
-# secrets → start broker/HA/InfluxDB → provision InfluxDB (buckets, DBRP,
-# tokens) → start Grafana → health checks.
+# secrets → GPS (host gpsd + Bluetooth binding, if GPS_BT_MAC is set) →
+# start broker/HA/InfluxDB → provision InfluxDB (buckets, DBRP, tokens) →
+# start Grafana → health checks.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,6 +36,10 @@ env_set() {  # replace KEY=... in place (value must not contain '|')
 }
 rand_hex()  { openssl rand -hex "$1"; }
 rand_pass() { openssl rand -base64 32 | tr -d '/+=' | cut -c1-24; }
+install_if_changed() {  # src dest → returns 0 if it installed (content differed)
+  if sudo cmp -s "$1" "$2"; then return 1; fi
+  sudo install -D -m 0644 "$1" "$2"
+}
 
 # --------------------------------------------------------------------------
 preflight() {
@@ -119,6 +124,39 @@ secrets() {
   fi
   mkdir -p "$DEPLOY/volumes/grafana"
   sudo chown 472:0 "$DEPLOY/volumes/grafana"  # Grafana's container user
+}
+
+gps_host() {
+  log "GPS: host gpsd + Bluetooth RFCOMM binding (Decision #28)"
+  local mac ch changed=0 unit
+  mac="$(env_get GPS_BT_MAC | tr '[:lower:]' '[:upper:]')"
+  ch="$(env_get GPS_BT_CHANNEL)"; ch="${ch:-1}"
+  if [[ -z "$mac" ]]; then
+    echo "GPS_BT_MAC not set in deploy/.env — skipping (see docs/hardware/gps-xgps160-trial.md)."
+    return
+  fi
+  [[ "$mac" =~ ^([0-9A-F]{2}:){5}[0-9A-F]{2}$ ]] || die "GPS_BT_MAC is not a MAC address"
+  [[ "$ch" =~ ^[0-9]+$ ]] || die "GPS_BT_CHANNEL must be a number"
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gpsd gpsd-clients >/dev/null
+  bluetoothctl trust "$mac" >/dev/null 2>&1 \
+    || warn "could not trust the GPS — pair it first (bluetoothctl pair), receiver powered on"
+
+  unit="$(mktemp)"
+  sed -e "s/@GPS_BT_MAC@/$mac/" -e "s/@GPS_BT_CHANNEL@/$ch/" "$DEPLOY/host/rfcomm-gps.service" > "$unit"
+  install_if_changed "$unit" /etc/systemd/system/rfcomm-gps.service && changed=1
+  rm -f "$unit"
+  install_if_changed "$DEPLOY/host/gpsd.default" /etc/default/gpsd && changed=1
+  install_if_changed "$DEPLOY/host/gpsd-bigair.conf" /etc/systemd/system/gpsd.service.d/bigair.conf && changed=1
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable rfcomm-gps.service gpsd.socket gpsd.service >/dev/null 2>&1
+  if [[ $changed == 1 ]] || ! systemctl is-active -q gpsd.service; then
+    sudo systemctl restart rfcomm-gps.service gpsd.service
+    echo "GPS config installed/changed — services restarted."
+  else
+    echo "GPS config unchanged."
+  fi
+  echo "rfcomm-gps: $(systemctl is-active rfcomm-gps.service)  gpsd: $(systemctl is-active gpsd.service)"
 }
 
 start_core() {
@@ -208,6 +246,17 @@ health() {
     warn "Mosquitto did not answer"; ok=0
   fi
 
+  if [[ -n "$(env_get GPS_BT_MAC)" ]]; then
+    local mode  # report fix mode only, never coordinates
+    mode="$(timeout 20 gpspipe -w -n 40 127.0.0.1:2947 2>/dev/null \
+      | jq -r 'select(.class == "TPV") | .mode' 2>/dev/null | tail -1 || true)"
+    case "$mode" in
+      3) echo "GPS: 3D fix" ;;
+      2) echo "GPS: 2D fix (weak sky view?)" ;;
+      *) warn "GPS: no fix from gpsd (mode='${mode:-none}'). Receiver on? See docs/hardware/gps-xgps160-trial.md"; ok=0 ;;
+    esac
+  fi
+
   echo -n "Home Assistant (first start can take a few minutes)"
   for _ in $(seq 1 90); do
     if curl -s -o /dev/null -w '%{http_code}' http://localhost:8123 | grep -qE '200|302'; then echo " ok"; break; fi
@@ -229,6 +278,7 @@ preflight
 install_packages
 docker_log_limits
 secrets
+gps_host
 start_core
 provision_influx
 start_grafana
