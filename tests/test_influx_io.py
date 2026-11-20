@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -20,6 +20,9 @@ from bigair.influx_io import (
     vehicle_point,
 )
 from bigair.signals import GpsFix, ObdSample
+
+if TYPE_CHECKING:
+    from urllib.request import Request
 
 TS = datetime(2026, 6, 1, 15, 0, 0, 250_000, tzinfo=UTC)
 TS_MS = 1_780_326_000_250
@@ -154,9 +157,9 @@ def _writer() -> InfluxWriter:
 
 
 def test_writer_posts_line_protocol_per_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
-    sent: list[Any] = []
+    sent: list[Request] = []
 
-    def fake_urlopen(req: Any, timeout: float) -> FakeResponse:
+    def fake_urlopen(req: Request, timeout: float) -> FakeResponse:
         sent.append(req)
         return FakeResponse(204)
 
@@ -175,7 +178,7 @@ def test_writer_posts_line_protocol_per_bucket(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_writer_keeps_points_when_influx_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
-    def down(req: Any, timeout: float) -> FakeResponse:
+    def down(req: Request, timeout: float) -> FakeResponse:
         raise OSError("connection refused")
 
     monkeypatch.setattr(influx_io, "urlopen", down)
