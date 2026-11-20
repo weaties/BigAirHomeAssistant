@@ -68,7 +68,7 @@ containers (bigair, Grafana) use `mosquitto` and `influxdb`.
 ## Local and offline
 
 - No Nabu Casa or cloud integrations in the critical path. The Companion app
-  uses the hotspot SSID with `internal_url`, e.g. `http://bigair.local:8123`.
+  uses the hotspot SSID with `internal_url`, e.g. `http://bigair-ha.local:8123`.
 - The van must work with no internet for weeks. Check every new integration
   for a cloud dependency before adding it.
 

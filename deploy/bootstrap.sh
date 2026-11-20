@@ -187,7 +187,7 @@ health() {
   local ok=1 pass
   pass="$(env_get GRAFANA_ADMIN_PASSWORD)"
   local dashboards
-  dashboards="$({ curl -sf -u "admin:$pass" "http://localhost:3000/api/search?query=" || echo '[]'; } \
+  dashboards="$({ curl -sf -u "admin:$pass" "http://localhost:3000/api/search?type=dash-db" || echo '[]'; } \
     | jq -r '.[].uid' | sort | tr '\n' ' ')"
   echo "Grafana dashboards: ${dashboards:-none}"
   [[ "$dashboards" == *bigair-engine-history* && "$dashboards" == *bigair-mpg-map* ]] || { warn "provisioned dashboards missing"; ok=0; }

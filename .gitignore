@@ -36,6 +36,10 @@ homeassistant/tts/
 homeassistant/home-assistant_v2.db*
 homeassistant/home-assistant.log*
 homeassistant/.HA_VERSION
+homeassistant/.ha_run.lock
+# blueprints/ holds HA's bundled defaults, written on first start.
+homeassistant/blueprints/
+homeassistant/www/
 homeassistant/*.db
 homeassistant/*.log
 
