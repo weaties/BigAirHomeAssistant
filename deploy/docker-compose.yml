@@ -71,6 +71,10 @@ services:
       DISPLAY_API_KEY: ${DISPLAY_API_KEY}
       DISPLAY_REFRESH_SECONDS: ${DISPLAY_REFRESH_SECONDS:-60}
       DISPLAY_FULL_REFRESH_SECONDS: ${DISPLAY_FULL_REFRESH_SECONDS:-600}
+      # Drive testing: set to /run/bigair/debug.json to show Pi supply and van voltage.
+      DISPLAY_DEBUG_FILE: ${DISPLAY_DEBUG_FILE:-}
+    volumes:
+      - /run/bigair:/run/bigair:ro  # written by deploy/host/bigair-debug.service
     healthcheck:
       test:
         - CMD

@@ -10,7 +10,8 @@ Pure functions: state + time in, image/bytes out. No I/O.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -29,6 +30,68 @@ class GaugeState:
     capacity_gal: float = 47.0
     mpg_spark: tuple[float, ...] = ()  # current-trip mpg buckets, oldest first
     updated: datetime | None = None  # UTC time of the fuel-model state
+
+
+DEBUG_STALE_AFTER = timedelta(seconds=30)
+
+
+@dataclass(frozen=True)
+class DebugInfo:
+    """Power debug readings for drive testing (Pi supply, van battery)."""
+
+    updated: datetime  # UTC
+    pi_5v_v: float | None = None
+    undervolt_now: bool = False
+    undervolt_since_boot: bool = False
+    throttled_since_boot: bool = False
+    van_battery_v: float | None = None
+    uptime_s: float | None = None
+
+
+def debug_from_dict(d: dict[str, Any]) -> DebugInfo:
+    """Parse the host's debug JSON (deploy/host/bigair-debug.py)."""
+    try:
+        updated = datetime.strptime(str(d["ts"]), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except (KeyError, ValueError) as e:
+        raise ValueError(f"bad debug record: {e}") from e
+    flags = int(str(d.get("throttled", "0")), 16)  # vcgencmd get_throttled bits
+
+    def num(key: str) -> float | None:
+        v = d.get(key)
+        return None if v is None else float(v)
+
+    return DebugInfo(
+        updated=updated,
+        pi_5v_v=num("pi_5v_v"),
+        undervolt_now=bool(flags & 0x1),
+        undervolt_since_boot=bool(flags & 0x10000),
+        throttled_since_boot=bool(flags & 0x40000),
+        van_battery_v=num("van_battery_v"),
+        uptime_s=num("uptime_s"),
+    )
+
+
+def debug_text(info: DebugInfo, now: datetime) -> str:
+    """One status line, e.g. "PI 5.01V OK | VAN 14.2V | UP 12m"."""
+    age = (now - info.updated).total_seconds()
+    prefix = f"DEBUG STALE {age:.0f}s | " if age > DEBUG_STALE_AFTER.total_seconds() else ""
+    pi = "--" if info.pi_5v_v is None else f"{info.pi_5v_v:.2f}"
+    if info.undervolt_now:
+        health = "UNDERVOLT!"
+    else:
+        past = [
+            n
+            for n, f in (("UV", info.undervolt_since_boot), ("THR", info.throttled_since_boot))
+            if f
+        ]
+        health = f"({','.join(past)} since boot)" if past else "OK"
+    van = "--" if info.van_battery_v is None else f"{info.van_battery_v:.1f}"
+    if info.uptime_s is None:
+        up = "--"
+    else:
+        mins = int(info.uptime_s // 60)
+        up = f"{mins // 60}h{mins % 60:02d}m" if mins >= 60 else f"{mins}m"
+    return f"{prefix}PI {pi}V {health} | VAN {van}V | UP {up}"
 
 
 def is_stale(state: GaugeState, now: datetime, max_age: timedelta = STALE_AFTER) -> bool:
@@ -63,7 +126,12 @@ def _sparkline(
 
 
 def render_gauge(
-    state: GaugeState, now: datetime, *, tz: str, low_fuel_gal: float = 8.0
+    state: GaugeState,
+    now: datetime,
+    *,
+    tz: str,
+    low_fuel_gal: float = 8.0,
+    debug: DebugInfo | None = None,
 ) -> Image.Image:
     """Render the fuel gauge: tank gallons + level bar, range, trip-mpg sparkline, status."""
     img = Image.new("L", (WIDTH, HEIGHT), WHITE)
@@ -102,7 +170,13 @@ def render_gauge(
         draw.line([(30, 120), (600, 120)], fill=ink, width=8)
         draw.line([(30, 310), (700, 310)], fill=BLACK, width=8)
 
-    _sparkline(draw, state.mpg_spark, (40, 380, 920, 480))
+    if debug is None:
+        _sparkline(draw, state.mpg_spark, (40, 380, 920, 480))
+    else:
+        # Drive-testing mode: the debug strip takes the sparkline's place.
+        draw.rectangle((20, 375, WIDTH - 20, 485), outline=BLACK, width=3)
+        draw.text((40, 395), debug_text(debug, now), font=_font(40), fill=BLACK)
+        draw.text((40, 445), f"debug @ {_local(debug.updated, tz)}", font=_font(28), fill=GREY)
 
     # Footer: local clock + status.
     draw.line([(0, 495), (WIDTH, 495)], fill=GREY, width=2)

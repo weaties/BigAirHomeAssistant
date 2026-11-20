@@ -1,0 +1,15 @@
+[Unit]
+Description=BigAir power debug readings for the dash display (drive testing)
+After=local-fs.target
+
+[Service]
+User=weaties
+SupplementaryGroups=video
+RuntimeDirectory=bigair
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/bin/python3 -I /opt/bigair/bigair-debug.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
