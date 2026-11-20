@@ -87,3 +87,18 @@ def test_touch_menu_is_not_offered(base_url: str) -> None:
 
 def test_health_needs_no_key(base_url: str) -> None:
     assert _get(f"{base_url}/health", key=None)[0] == 200
+
+
+def test_access_log_names_the_client_and_request(base_url: str) -> None:
+    from loguru import logger
+
+    lines: list[str] = []
+    sink = logger.add(lambda m: lines.append(str(m)), level="DEBUG", format="{message}")
+    try:
+        _get(base_url + "/health", key=None)
+    finally:
+        logger.remove(sink)
+    (line,) = [m for m in lines if "display http" in m]
+    assert "127.0.0.1" in line
+    assert '"GET /health HTTP/1.1" 200' in line
+    assert "%s" not in line
