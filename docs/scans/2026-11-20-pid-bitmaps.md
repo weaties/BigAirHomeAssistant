@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Vehicle | 2017 Sprinter W906, US, OM642 3.0 V6, 4x4 (VIN not read) |
-| Adapter | WiCAN (MeatPi), model and firmware to be read from its About page; ELM327 v2.3 emulation over TCP 35000 |
+| Adapter | WiCAN-OBD-PRO (MeatPi), firmware 4.50 (git v4.50p); ELM327 v2.3 emulation over TCP 35000 |
 | Path | WiCAN joined the van router `bigair`; requests sent from the Pi (`bigair-ha`) with a read-only Python script |
 | Protocol | `ATSP6` → ISO 15765-4, CAN 11-bit, 500 kbit/s (the WiCAN auto-detected the same) |
 | Engine state | Running, parked, warming up (about 16 min after start) |
@@ -85,4 +85,4 @@ needs an independent reference before it can be trusted (`/pid-discovery`).
 1. Drive: log `0D`, `0C`, `5E`, `2F` and GPS speed at 1 Hz at steady 30 and 60 mph to
    verify speed, and record the dash odometer at the start and end.
 2. Fill up (full) at the start and end of at least 100 mi to verify `5E`.
-3. Read the WiCAN model and firmware from its About page.
+3. Update the WiCAN firmware (v6.0.0 offered) only after this baseline, then re-run the bitmaps to confirm nothing changed.
