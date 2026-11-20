@@ -128,7 +128,7 @@ tests/fixtures/      # synthetic data with known-good answers (never real drives
 homeassistant/       # HA config: configuration.yaml + packages/*.yaml
 esphome/             # one YAML per ESP32 node + common/ fragments
 grafana/provisioning/  # datasources/ and dashboards/*.json
-deploy/              # docker-compose.yml, mosquitto.conf, .env.example
+deploy/              # docker-compose.yml, bootstrap.sh (Pi setup), mosquitto.conf, .env.example
 docs/                # pid-register.md, carplay.md, hardware notes; docs/archive/ dated
 .claude/skills/      # domain skills (see Claude Code specifics)
 ```
@@ -142,6 +142,10 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy src/
 uv run yamllint homeassistant esphome grafana deploy .github   # config lint
 uvx esphome config esphome/<node>.yaml          # validate one ESPHome node
 docker compose -f deploy/docker-compose.yml config   # validate the stack
+uvx --from shellcheck-py shellcheck -x deploy/*.sh   # lint shell scripts
+
+# On the Pi (docs/hardware/pi-setup.md):
+./deploy/bootstrap.sh       # idempotent install, secrets, start + provision the stack
 ```
 
 All checks (tests, ruff check, ruff format, mypy, yamllint) must pass
@@ -323,3 +327,9 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     so after a cold boot every timestamp would be wrong. Run chrony with a
     gpsd refclock; bigair refuses to write to Influx until the clock is synced
     (tracked in issue #22).
+25. **2026-11-19 — Bring-up on an SD card; SSD before the van install**
+    (Dan's choice). Amends #6 for the bench phase only. Docker log rotation
+    (10 MB × 3) limits SD wear in the meantime. Setup is headless (SSH, plus
+    the web UIs) via the idempotent `deploy/bootstrap.sh`, which also does the
+    InfluxDB bucket, DBRP and token provisioning from issue #6. The bootstrap
+    never touches networking while the van Wi-Fi is undecided.
