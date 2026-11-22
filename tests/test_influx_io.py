@@ -119,6 +119,26 @@ def test_fuel_point() -> None:
     )
 
 
+def test_fuel_point_carries_the_stale_and_calibrating_flags() -> None:
+    """Grafana's live panels hide a stale tank and label a calibrating one (#65)."""
+    p = fuel_point(
+        TS,
+        "fuel_rate",
+        39.95,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        stale=True,
+        calibrating=False,
+    )
+    assert (
+        to_line(p) == f"fuel,method=fuel_rate tank_gal=39.95,stale=true,calibrating=false {TS_MS}"
+    )
+
+
 def _schema() -> dict[str, set[str]]:
     """Measurement → field names, parsed from the CLAUDE.md Data model table."""
     text = (Path(__file__).parents[1] / "CLAUDE.md").read_text()
@@ -135,7 +155,9 @@ def test_mappers_only_write_fields_in_the_data_model() -> None:
     points = [
         track_point(fix, mpg_30s=1.0, trip_id="t1"),
         vehicle_point(sample),
-        fuel_point(TS, "fuel_rate", 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0),
+        fuel_point(
+            TS, "fuel_rate", 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, stale=False, calibrating=True
+        ),
     ]
     for p in points:
         assert set(p.fields) <= schema[p.measurement], p.measurement

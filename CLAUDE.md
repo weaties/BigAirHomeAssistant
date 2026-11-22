@@ -179,7 +179,7 @@ tag with trip IDs, prices, coordinates or free text.
 | `engine` | raw | `source` (wican) | `rpm`, `coolant_temp_c`, `intake_air_temp_c`, `maf_g_s`, `faer_ratio`, `engine_load_pct`, `boost_kpa`, `fuel_rate_lph` |
 | `vehicle` | raw | `source` | `speed_mph`, `odometer_mi`, `battery_v` |
 | `driver` | raw | `source` (wican, can) | `throttle_pct`, `cruise_active`, `cruise_set_mph`, `brake_active` |
-| `fuel` | raw | `method` (fuel_rate, maf_faer, maf_fixed) | `tank_gal`, `engine_used_gal`, `heater_used_gal`, `range_mi`, `mpg_rolling`, `mpg_instant_30s`, `fuel_rate_gph` |
+| `fuel` | raw | `method` (fuel_rate, maf_faer, maf_fixed) | `tank_gal`, `engine_used_gal`, `heater_used_gal`, `range_mi`, `mpg_rolling`, `mpg_instant_30s`, `fuel_rate_gph`, `stale`, `calibrating` |
 | `heater` | raw | `method` (wbus_pulses, runtime_datasheet, current) | `running`, `power_level`, `pump_hz`, `fuel_gph`, `used_gal` |
 | `electrical` | raw | `device` (bmv700, mppt, dcdc, shore) | `voltage_v`, `current_a`, `power_w`, `soc_pct` |
 | `load` | raw | `circuit` (fan, webasto, lights, internet, inverter, pi) | `current_a`, `voltage_v`, `power_w` |
@@ -453,3 +453,12 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     hostname, so the bare tailnet IP returns 404. Tailnet membership is the access
     control. The van LAN never sees it, and the device keeps its Bearer key.
     Like Decision #30, nothing depends on it.
+38. **2026-11-22 — Grafana allows anonymous Viewer access** (Dan's request, #65).
+    The phone opens the `bigair-phone` dashboard in Safari (Add to Home Screen,
+    `?kiosk`) with no login, on the van Wi-Fi or over Tailscale (Dan's request).
+    Viewer can't edit or add dashboards (an API write returns 403). Grafana is
+    reachable only on the van LAN and the tailnet, but anyone on the van Wi-Fi can
+    see the dashboards, including the GPS track map. `GRAFANA_ANONYMOUS=false` in
+    `deploy/.env` turns it off. The `fuel` measurement gained `stale` and
+    `calibrating` booleans so the live tank panel shows "No fresh data" rather than
+    an old number.

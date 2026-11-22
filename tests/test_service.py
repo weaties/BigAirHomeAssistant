@@ -145,6 +145,8 @@ def test_influx_points(tmp_path: Path) -> None:
     assert points["fuel"].tags == {"method": "fuel_rate"}
     assert points["fuel"].fields["tank_gal"] == pytest.approx(47.0 - 3.6 / 3600, abs=1e-6)
     assert points["vehicle"].fields["speed_mph"] == 60.0
+    assert points["fuel"].fields["stale"] is False
+    assert points["fuel"].fields["calibrating"] is True  # 5E not yet VERIFIED (Decision #32)
 
 
 def test_no_tank_means_no_fuel_point(tmp_path: Path) -> None:
