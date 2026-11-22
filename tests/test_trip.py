@@ -79,3 +79,21 @@ def test_overrun_bucket_is_capped() -> None:
     trip = TripMpg(bucket_mi=1.0, cap_mpg=50.0)
     _drive(trip, 0, 60, 60.0, 0.0)  # coasting 1 mi, no fuel
     assert trip.buckets == (50.0,)
+
+
+def test_trip_totals_and_start() -> None:
+    trip = TripMpg(bucket_mi=2.0)
+    assert trip.trip_miles == 0.0 and trip.trip_gal == 0.0 and trip.trip_start is None
+    _drive(trip, 0, 360, 60.0, 4.0)  # 6 mi, 0.4 gal
+    assert trip.trip_miles == pytest.approx(6.0, rel=1e-3)
+    assert trip.trip_gal == pytest.approx(0.4, rel=1e-3)
+    assert trip.trip_start == T0
+
+
+def test_new_trip_resets_totals_and_start() -> None:
+    trip = TripMpg(bucket_mi=2.0)
+    _drive(trip, 0, 360, 60.0, 4.0)
+    restart = 360 + 31 * 60
+    _drive(trip, restart, 60, 60.0, 4.0)  # 1 mi after a 31 min park
+    assert trip.trip_miles == pytest.approx(1.0, rel=1e-3)
+    assert trip.trip_start == T0 + timedelta(seconds=restart)
