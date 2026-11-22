@@ -8,10 +8,17 @@ from pathlib import Path
 
 
 def _display(args: argparse.Namespace) -> int:
+    import threading
+
     from loguru import logger
 
     from bigair.display_render import GaugeState
-    from bigair.display_server import debug_file_reader, gauge_file_reader, make_server
+    from bigair.display_server import (
+        debug_file_reader,
+        gauge_file_reader,
+        make_preview_server,
+        make_server,
+    )
 
     # Live numbers come from the fuel service's gauge feed (#17). Without one the
     # gauge truthfully shows "NO FUEL DATA" (a wrong fuel number is worse than none).
@@ -22,10 +29,18 @@ def _display(args: argparse.Namespace) -> int:
 
     state = gauge_file_reader(Path(gauge_path)) if gauge_path else no_data
 
-    # Drive-testing aid: DISPLAY_DEBUG_FILE (host JSON, deploy/host/bigair-debug.py)
-    # replaces the sparkline with Pi-supply and van-battery readings.
+    # DISPLAY_DEBUG_FILE (host JSON, deploy/host/bigair-debug.py) adds Pi-supply
+    # readings to the Van screen (#62).
     debug_path = os.environ.get("DISPLAY_DEBUG_FILE")
-    debug = {"debug_fn": debug_file_reader(Path(debug_path))} if debug_path else {}
+    debug_fn = debug_file_reader(Path(debug_path)) if debug_path else lambda: None
+    tz = os.environ.get("TZ", "UTC")
+    if args.preview_port:
+        # Keyless browser preview; Compose publishes it on loopback only (Decision #37).
+        preview = make_preview_server(
+            host=args.host, port=args.preview_port, state_fn=state, tz=tz, debug_fn=debug_fn
+        )
+        threading.Thread(target=preview.serve_forever, daemon=True).start()
+        logger.info("dash preview server on {}:{}", args.host, args.preview_port)
     server = make_server(
         host=args.host,
         port=args.port,
@@ -33,8 +48,8 @@ def _display(args: argparse.Namespace) -> int:
         state_fn=state,
         refresh_s=int(os.environ.get("DISPLAY_REFRESH_SECONDS", "60")),
         full_refresh_s=int(os.environ.get("DISPLAY_FULL_REFRESH_SECONDS", "600")),
-        tz=os.environ.get("TZ", "UTC"),
-        **debug,
+        tz=tz,
+        debug_fn=debug_fn,
     )
     logger.info("dash display server on {}:{}", args.host, args.port)
     server.serve_forever()
@@ -168,6 +183,9 @@ def main(argv: list[str] | None = None) -> int:
     disp = sub.add_parser("display", help="serve the dash fuel gauge frame (eink-screen firmware)")
     disp.add_argument("--host", default="0.0.0.0")  # noqa: S104 — van LAN; Bearer key required
     disp.add_argument("--port", type=int, default=int(os.environ.get("DISPLAY_PORT", "8090")))
+    disp.add_argument(
+        "--preview-port", type=int, default=0, help="keyless browser preview; 0 = off"
+    )
     sub.add_parser("run", help="run the fuel service (WiCAN → fuel model → HA/MQTT, InfluxDB)")
     args = parser.parse_args(argv)
     if args.version:
