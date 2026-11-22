@@ -1,0 +1,1034 @@
+{
+  "id": null,
+  "uid": "bigair-phone",
+  "title": "Van (phone)",
+  "description": "Phone-width companion to the HA Van dashboard (#65). Open with ?kiosk on the van Wi-Fi.",
+  "tags": [
+    "bigair",
+    "phone"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "graphTooltip": 1,
+  "refresh": "10s",
+  "liveNow": false,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Fill-ups",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "influx-van-history"
+        },
+        "enable": true,
+        "iconColor": "#30a46c",
+        "query": "SELECT \"gallons\", \"price_per_gal\" FROM \"fill_up\" WHERE $timeFilter AND \"status\" = 'confirmed'",
+        "textColumn": "gallons"
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "HA Van dashboard",
+      "type": "link",
+      "url": "http://bigair-ha.local:8123/bigair-van/drive",
+      "targetBlank": true,
+      "icon": "dashboard"
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Now",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Tank",
+      "description": "Fuel model tank level. Hidden while the fuel data is stale; check Status for calibrating.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "table",
+          "query": "SELECT last(\"tank_gal\") AS \"Tank\", last(\"stale\") AS \"stale\" FROM \"fuel\" WHERE time > now() - 30d"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "exclude",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "stale",
+                "config": {
+                  "id": "equal",
+                  "options": {
+                    "value": true
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: gal",
+          "decimals": 1,
+          "min": 0,
+          "max": 47,
+          "noValue": "No fresh data",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#e5484d",
+                "value": null
+              },
+              {
+                "color": "#f5a524",
+                "value": 8
+              },
+              {
+                "color": "#30a46c",
+                "value": 16
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^Tank$/",
+          "values": false
+        },
+        "showThresholdMarkers": true,
+        "showThresholdLabels": false,
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "sizing": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Range",
+      "description": "Miles left at the rolling mpg. Hidden while stale.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "table",
+          "query": "SELECT last(\"range_mi\") AS \"Range\", last(\"stale\") AS \"stale\" FROM \"fuel\" WHERE time > now() - 30d"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: mi",
+          "decimals": 0,
+          "noValue": "No fresh data",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3e8ef7"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3e8ef7",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^Range$/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "exclude",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "stale",
+                "config": {
+                  "id": "equal",
+                  "options": {
+                    "value": true
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Economy now",
+      "description": "30 s smoothed mpg; blank when parked.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"mpg_instant_30s\") FROM \"fuel\" WHERE time > now() - 15m GROUP BY time(15s) fill(null)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: mpg",
+          "decimals": 1,
+          "noValue": "Parked",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#14b8a6"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#14b8a6",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Status",
+      "description": "Fuel data freshness, and whether the fuel rate is still being calibrated (Decision #32).",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "table",
+          "query": "SELECT last(\"stale\") AS \"Data\", last(\"calibrating\") AS \"Fuel rate\" FROM \"fuel\" WHERE time > now() - 30d"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "string",
+          "decimals": 0,
+          "noValue": "Unknown",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#6e7079"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#6e7079",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Data"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "true": {
+                        "text": "STALE",
+                        "color": "#e5484d",
+                        "index": 0
+                      },
+                      "false": {
+                        "text": "FRESH",
+                        "color": "#30a46c",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fuel rate"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "true": {
+                        "text": "CALIBRATING",
+                        "color": "#3e8ef7",
+                        "index": 0
+                      },
+                      "false": {
+                        "text": "VERIFIED",
+                        "color": "#30a46c",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^(Data|Fuel rate)$/",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Last reading",
+      "description": "When bigair last wrote a fuel point. Parked with the engine off, this ages; that's expected.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "table",
+          "query": "SELECT last(\"tank_gal\") FROM \"fuel\" WHERE time > now() - 30d"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeFromNow",
+          "decimals": 0,
+          "noValue": "\u2014",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^Time$/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Fuel",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "panels": []
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Tank",
+      "description": "Tank level; parked stretches (no samples) are bridged up to a day because the tank does not change while parked. Green markers are fill-ups. Red band = under 8 gal.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"tank_gal\") FROM \"fuel\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "Tank"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: gal",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
+            "spanNulls": 86400000,
+            "showPoints": "never",
+            "lineInterpolation": "smooth",
+            "thresholdsStyle": {
+              "mode": "area"
+            },
+            "axisBorderShow": false,
+            "axisPlacement": "auto"
+          },
+          "min": 0,
+          "max": 47,
+          "decimals": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3e8ef7"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#e5484d",
+                "value": null
+              },
+              {
+                "color": "transparent",
+                "value": 8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Economy",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Fuel economy",
+      "description": "30 s smoothed mpg while driving, and the 150 mi rolling figure the range uses.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"mpg_instant_30s\") FROM \"fuel\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "30 s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"mpg_rolling\") FROM \"fuel\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "150 mi"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: mpg",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "spanNulls": false,
+            "showPoints": "never",
+            "lineInterpolation": "smooth",
+            "axisBorderShow": false,
+            "axisPlacement": "auto"
+          },
+          "decimals": 1,
+          "min": 0,
+          "softMax": 25
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "30 s"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#14b8a6"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "150 mi"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#f5a524"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "xychart",
+      "title": "Speed vs economy",
+      "description": "Every track point while moving (> 5 mph): where the van is most efficient.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-history"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-history"
+          },
+          "rawQuery": true,
+          "resultFormat": "table",
+          "query": "SELECT mean(\"speed_mph\") AS \"speed_mph\", mean(\"mpg_30s\") AS \"mpg_30s\" FROM \"track\" WHERE $timeFilter AND \"speed_mph\" > 5 AND \"mpg_30s\" > 0 GROUP BY time($__interval) fill(none)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#14b8a6"
+          },
+          "custom": {
+            "show": "points",
+            "pointSize": {
+              "fixed": 8
+            },
+            "pointShape": "circle",
+            "fillOpacity": 60,
+            "axisBorderShow": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "speed_mph"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "suffix: mph"
+              },
+              {
+                "id": "displayName",
+                "value": "Speed"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mpg_30s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "suffix: mpg"
+              },
+              {
+                "id": "displayName",
+                "value": "mpg"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 30
+              }
+            ]
+          }
+        ]
+      },
+      "interval": "10s",
+      "maxDataPoints": 4000,
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ],
+      "options": {
+        "mapping": "auto",
+        "series": [
+          {}
+        ],
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Map",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "type": "geomap",
+      "title": "Track by economy",
+      "description": "Coloured by 30 s mpg (red 8 \u2192 green 25). Basemap tiles need internet; offline the track still draws.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-history"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "interval": "5s",
+      "maxDataPoints": 6000,
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-history"
+          },
+          "rawQuery": true,
+          "resultFormat": "table",
+          "query": "SELECT last(\"lat\") AS \"lat\", last(\"lon\") AS \"lon\", mean(\"mpg_30s\") AS \"mpg_30s\" FROM \"track\" WHERE $timeFilter GROUP BY time($__interval) fill(none)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 8,
+          "max": 25,
+          "decimals": 1,
+          "unit": "suffix: mpg",
+          "color": {
+            "mode": "continuous-RdYlGr"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "view": {
+          "id": "fit",
+          "allLayers": true,
+          "padding": 10,
+          "lat": 0,
+          "lon": 0,
+          "zoom": 16
+        },
+        "controls": {
+          "showZoom": true,
+          "mouseWheelZoom": false
+        },
+        "basemap": {
+          "type": "default",
+          "name": "Basemap"
+        },
+        "layers": [
+          {
+            "type": "markers",
+            "name": "mpg",
+            "tooltip": true,
+            "location": {
+              "mode": "coords",
+              "latitude": "lat",
+              "longitude": "lon"
+            },
+            "config": {
+              "showLegend": true,
+              "style": {
+                "size": {
+                  "fixed": 4
+                },
+                "opacity": 0.85,
+                "color": {
+                  "field": "mpg_30s",
+                  "fixed": "#8e8e8e"
+                },
+                "symbol": {
+                  "mode": "fixed",
+                  "fixed": "img/icons/marker/circle.svg"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Van",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Battery",
+      "description": "Chassis battery from the OBD port (only while the WiCAN is awake).",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 57
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"battery_v\") FROM \"vehicle\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "Battery"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "volt",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "spanNulls": false,
+            "showPoints": "never",
+            "lineInterpolation": "smooth",
+            "thresholdsStyle": {
+              "mode": "line+area"
+            },
+            "axisBorderShow": false,
+            "axisPlacement": "auto"
+          },
+          "decimals": 2,
+          "softMin": 11.5,
+          "softMax": 14.8,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#e0a526"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#e5484d",
+                "value": null
+              },
+              {
+                "color": "transparent",
+                "value": 12.0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ]
+}

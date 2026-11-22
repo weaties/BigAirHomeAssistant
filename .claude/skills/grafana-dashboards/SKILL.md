@@ -49,6 +49,26 @@ grafana/provisioning/
 | `bigair-engine-history` | fuel rate, coolant temp, battery voltage (time series) |
 | `bigair-fuel` | tank gal, range mi, mpg rolling, fill-up annotations |
 | `bigair-mpg-map` | Geomap of `track`, coloured by `mpg_30s` |
+| `bigair-phone` | Phone-width (#65): tank gauge, range, mpg now, status, last reading; tank, mpg, speed-vs-mpg, track map, battery |
+
+## Phone dashboard rules (`bigair-phone`)
+
+- Open as `http://bigair-ha.local:3000/d/bigair-phone?kiosk` on the van Wi-Fi, or
+  `http://bigair-ha.<tailnet>.ts.net:3000/d/bigair-phone?kiosk` over Tailscale.
+  Anonymous Viewer access means no login either way (Decision #38). Grafana
+  publishes 3000 on all interfaces, so the tailnet reaches it directly; unlike the
+  loopback-only dash preview (Decision #37) it needs no `tailscale serve`.
+- Cross-links between HA and Grafana use `bigair-ha.local`, which only resolves on
+  the van Wi-Fi. The tailnet name can't go in this public repo.
+- Panels stack in `gridPos` order (y, then x) below ~769 px, so lay out the "Now"
+  row in reading order.
+- **Live values never show stale numbers.** Query `last("tank_gal"), last("stale")`
+  over a fixed window and drop the row with a *Filter data by values* transform
+  when `stale` is true, so the panel shows its `noValue` ("No fresh data"). Show
+  the reading's age with a stat on the `Time` field and unit `dateTimeFromNow`.
+- Track panels downsample (`last(lat)`, `last(lon)`, `mean(mpg_30s)` `GROUP BY
+  time($__interval)` with a panel `interval` and `maxDataPoints`); two days of
+  1 Hz track is ~170k points, which is too much for a phone.
 
 ## mpg Geomap recipe
 
@@ -58,6 +78,8 @@ grafana/provisioning/
   Colour = field `mpg_30s`, continuous scheme red→yellow→green, with a
   fixed min/max (e.g. 8–25 mpg) so maps compare across trips. Use a small
   marker size.
+- **View "fit": `zoom` is the maximum zoom**, so `zoom: 5` keeps the map at
+  continent scale. Use `zoom: 16` with `allLayers: true`.
 - Null mpg (idle) → grey or hidden. Don't colour idle as "0 mpg".
 - **Offline:** the default basemap tiles come from the internet. In the van
   the map needs a local tile source, or it degrades to a blank basemap with

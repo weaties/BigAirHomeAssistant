@@ -358,6 +358,8 @@ class FuelService:
                     m.mpg_rolling,
                     m.mpg_instant_30s,
                     s.fuel_rate_gph if s else None,
+                    stale=self.is_stale(now),
+                    calibrating=not self.config.fuel_rate_verified,
                 )
             )
         if s is not None and (s.ignition or s.battery_v is not None):
