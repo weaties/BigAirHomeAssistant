@@ -1,0 +1,372 @@
+# BigAir phone dash (#64): the LilyGo's Fuel, Trip, Economy and Van screens,
+# designed for an iPhone in the dash mount. Built-in cards only (works offline,
+# no HACS). Every bigair entity here comes from MQTT discovery in
+# src/bigair/ha_discovery.py; tests/test_ha_dashboard.py checks they exist.
+#
+# Rules: no fuel logic in templates (format only), and a stale tank or range
+# stays unavailable rather than showing an old number (CLAUDE.md).
+title: Van
+views:
+  # ---------------------------------------------------------------- Drive
+  - title: Drive
+    path: drive
+    icon: mdi:steering
+    type: sections
+    max_columns: 2
+    dense_section_placement: true
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Fuel
+            heading_style: title
+            icon: mdi:gas-station
+            badges:
+              - type: entity
+                entity: binary_sensor.bigair_van_ignition
+                show_state: true
+                show_icon: true
+                color: green
+          - type: markdown
+            text_only: true
+            content: >-
+              <ha-alert alert-type="error" title="Fuel data stale">No fuel-rate data
+              for over a minute with the engine on. Tank and range are hidden until it's
+              fresh.</ha-alert>
+            visibility:
+              - condition: state
+                entity: binary_sensor.bigair_van_fuel_data_stale
+                state: "on"
+          - type: markdown
+            text_only: true
+            content: >-
+              <ha-alert alert-type="warning" title="Fill-up pending">Answer the
+              notification or use <a href="/bigair-van/fill">Fill-up</a>. The tank
+              stays at its pre-fill value until then.</ha-alert>
+            visibility:
+              - condition: state
+                entity: binary_sensor.bigair_van_fill_up_pending
+                state: "on"
+          - type: gauge
+            entity: sensor.bigair_van_fuel_tank
+            name: Tank
+            min: 0
+            max: 47
+            needle: true
+            segments:
+              - from: 0
+                color: "#e5484d"
+                label: Low
+              - from: 8
+                color: "#f5a524"
+              - from: 16
+                color: "#30a46c"
+            grid_options:
+              columns: full
+          - type: tile
+            entity: sensor.bigair_van_range
+            name: Range
+            icon: mdi:map-marker-distance
+            color: blue
+            vertical: true
+            grid_options:
+              columns: 6
+          - type: tile
+            entity: sensor.bigair_van_fuel_economy_30_s
+            name: Now
+            icon: mdi:speedometer
+            color: teal
+            vertical: true
+            grid_options:
+              columns: 6
+          - type: markdown
+            text_only: true
+            content: >-
+              <ha-alert alert-type="info">Calibrating: tank and range are estimates
+              until a full-to-full check over 100+ mi.</ha-alert>
+            visibility:
+              - condition: state
+                entity: binary_sensor.bigair_van_fuel_rate_calibrating
+                state: "on"
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Economy
+            heading_style: title
+            icon: mdi:leaf
+          - type: tile
+            entity: sensor.bigair_van_fuel_economy_30_s
+            name: Last 30 s
+            color: teal
+            features_position: bottom
+            features:
+              - type: trend-graph
+                hours_to_show: 1
+            grid_options:
+              columns: full
+          - type: tile
+            entity: sensor.bigair_van_trip_economy
+            name: This trip
+            icon: mdi:map-marker-path
+            color: teal
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_fuel_economy_150_mi
+            name: 150 mi
+            color: teal
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_fuel_economy_last_fill
+            name: Since fill
+            color: teal
+            vertical: true
+            grid_options:
+              columns: 4
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Trip
+            heading_style: title
+            icon: mdi:road-variant
+          - type: tile
+            entity: sensor.bigair_van_trip_distance
+            name: Distance
+            icon: mdi:map-marker-distance
+            color: indigo
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_trip_fuel
+            name: Fuel used
+            icon: mdi:water
+            color: indigo
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_trip_started
+            name: Started
+            icon: mdi:clock-start
+            color: indigo
+            vertical: true
+            grid_options:
+              columns: 4
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Van
+            heading_style: title
+            icon: mdi:van-utility
+          - type: tile
+            entity: sensor.bigair_van_battery
+            name: Battery
+            color: amber
+            features_position: bottom
+            features:
+              - type: trend-graph
+                hours_to_show: 24
+            grid_options:
+              columns: full
+          - type: tile
+            entity: sensor.bigair_van_engine_last_seen
+            name: Engine data
+            icon: mdi:engine
+            color: grey
+            grid_options:
+              columns: 6
+          - type: tile
+            entity: sensor.bigair_van_gps_last_fix
+            name: GPS fix
+            color: grey
+            grid_options:
+              columns: 6
+          - type: markdown
+            text_only: true
+            content: >-
+              Charts and the mpg map: <a href="http://bigair-ha.local:3000/d/bigair-phone?kiosk"
+              target="_blank">Grafana phone dashboard</a> (van Wi-Fi).
+
+  # ---------------------------------------------------------------- Fill-up
+  - title: Fill-up
+    path: fill
+    icon: mdi:gas-station
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Log a fill-up
+            heading_style: title
+            icon: mdi:receipt-text
+          - type: markdown
+            text_only: true
+            content: >-
+              <ha-alert alert-type="warning" title="Fill-up detected">Enter what
+              the pump says. The tank stays at its pre-fill value until you
+              do.</ha-alert>
+            visibility:
+              - condition: state
+                entity: binary_sensor.bigair_van_fill_up_pending
+                state: "on"
+          - type: tile
+            entity: input_select.fill_up_type
+            name: Fill
+            icon: mdi:gauge-full
+            color: blue
+            features_position: bottom
+            features:
+              - type: select-options
+            grid_options:
+              columns: full
+          - type: tile
+            entity: input_number.fill_up_gallons
+            name: Gallons
+            icon: mdi:water
+            color: blue
+            features_position: bottom
+            features:
+              - type: numeric-input
+                style: buttons
+            grid_options:
+              columns: full
+          - type: tile
+            entity: input_number.fill_up_price_per_gal
+            name: Price per gallon
+            icon: mdi:currency-usd
+            color: blue
+            features_position: bottom
+            features:
+              - type: numeric-input
+                style: buttons
+            grid_options:
+              columns: full
+          - type: tile
+            entity: script.submit_fill_up_form
+            name: Log it
+            icon: mdi:send
+            color: green
+            tap_action:
+              action: perform-action
+              perform_action: script.submit_fill_up_form
+              confirmation:
+                text: Log this fill-up?
+            icon_tap_action:
+              action: perform-action
+              perform_action: script.submit_fill_up_form
+              confirmation:
+                text: Log this fill-up?
+            grid_options:
+              columns: full
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Last fill-up
+            heading_style: title
+            icon: mdi:history
+          - type: markdown
+            text_only: true
+            content: >-
+              {{ states('sensor.bigair_van_last_fill_up') if
+              has_value('sensor.bigair_van_last_fill_up') else 'Nothing logged yet.' }}
+          - type: tile
+            entity: sensor.bigair_van_fuel_economy_last_fill
+            name: Economy since last full
+            color: teal
+            grid_options:
+              columns: full
+          - type: heading
+            heading: Shortcuts
+            heading_style: subtitle
+          - type: tile
+            entity: button.bigair_van_filled_to_full
+            name: Filled to full
+            icon: mdi:gas-station
+            color: orange
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.bigair_van_filled_to_full
+              confirmation:
+                text: Set the tank to full (47 gal)?
+            grid_options:
+              columns: 6
+          - type: tile
+            entity: script.log_fill_up
+            name: Ask on phone
+            icon: mdi:cellphone-message
+            color: orange
+            tap_action:
+              action: perform-action
+              perform_action: script.log_fill_up
+            grid_options:
+              columns: 6
+
+  # ---------------------------------------------------------------- History
+  - title: History
+    path: history
+    icon: mdi:chart-line
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Tank
+            heading_style: title
+            icon: mdi:gas-station
+          - type: history-graph
+            hours_to_show: 168
+            entities:
+              - entity: sensor.bigair_van_fuel_tank
+                name: Tank
+            grid_options:
+              columns: full
+          - type: heading
+            heading: Economy
+            heading_style: title
+            icon: mdi:leaf
+          - type: statistics-graph
+            chart_type: line
+            period: day
+            days_to_show: 30
+            stat_types: [mean]
+            entities:
+              - entity: sensor.bigair_van_fuel_economy_150_mi
+                name: 150 mi
+              - entity: sensor.bigair_van_fuel_economy_last_fill
+                name: Since fill
+            grid_options:
+              columns: full
+      - type: grid
+        cards:
+          - type: heading
+            heading: Today
+            heading_style: title
+            icon: mdi:calendar-today
+          - type: history-graph
+            hours_to_show: 24
+            entities:
+              - entity: sensor.bigair_van_fuel_economy_30_s
+                name: mpg (30 s)
+            grid_options:
+              columns: full
+          - type: history-graph
+            hours_to_show: 48
+            entities:
+              - entity: sensor.bigair_van_battery
+                name: Battery
+              - entity: binary_sensor.bigair_van_ignition
+                name: Ignition
+            grid_options:
+              columns: full
