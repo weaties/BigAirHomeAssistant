@@ -449,6 +449,7 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     request, #62). A read-only preview server (PNGs and a screen-flipping page,
     never `.raw` frames) runs beside the device server. Compose publishes it on
     `127.0.0.1:8091` only, and bootstrap runs `tailscale serve --http=8091` to
-    expose it on the Pi's tailnet address. Tailnet membership is the access
+    expose it at `http://bigair-ha.<tailnet>.ts.net:8091/`. Serve routes by
+    hostname, so the bare tailnet IP returns 404. Tailnet membership is the access
     control. The van LAN never sees it, and the device keeps its Bearer key.
     Like Decision #30, nothing depends on it.

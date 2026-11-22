@@ -216,7 +216,8 @@ tailscale_preview() {
   port="$(env_get DISPLAY_PREVIEW_PORT)"
   port="${port:-8091}"
   sudo tailscale serve --bg --http="$port" "http://127.0.0.1:$port" >/dev/null
-  echo "Dash preview (tailnet only): http://$(tailscale ip -4 | head -1):$port/"
+  # Serve routes by Host header: the bare tailnet IP gets a 404, so print the name.
+  echo "Dash preview (tailnet only): http://$(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//'):$port/"
 }
 
 start_core() {

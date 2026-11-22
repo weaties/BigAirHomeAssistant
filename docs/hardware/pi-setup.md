@@ -199,4 +199,6 @@ show `--`.
 
 The bootstrap's Tailscale step runs `tailscale serve` for the keyless dash
 preview (Decision #37). From any device on the tailnet, open
-`http://<pi tailscale ip>:8091/`. It isn't reachable from the van LAN.
+`http://bigair-ha.<tailnet>.ts.net:8091/` (the bootstrap prints it). Use the
+name: `tailscale serve` routes by hostname, so the bare tailnet IP returns 404.
+It isn't reachable from the van LAN.

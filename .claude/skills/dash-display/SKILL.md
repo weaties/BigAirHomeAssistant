@@ -65,8 +65,10 @@ a page at `/` with a button per screen and the touch menu (clicking a tile
 works like a tap), PNGs at `/api/display.png?screen=<id>`, and no `.raw`
 frames. Compose publishes it on `127.0.0.1` only, and bootstrap runs
 `tailscale serve --bg --http=8091 http://127.0.0.1:8091`, so it's reachable at
-`http://<pi tailscale ip>:8091/` from tailnet devices and never on the van
-LAN. Never publish 8091 on `0.0.0.0`.
+`http://bigair-ha.<tailnet>.ts.net:8091/` (or `http://bigair-ha:8091/` with
+MagicDNS) from tailnet devices and never on the van
+LAN. Serve matches on the Host header, so the bare tailnet IP gets a 404:
+use the name. Never publish 8091 on `0.0.0.0`.
 
 ## Changing what's shown
 
