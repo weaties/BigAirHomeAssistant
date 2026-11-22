@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from datetime import datetime
 
 DISCOVERY_PREFIX = "homeassistant"
@@ -25,6 +26,7 @@ FUEL_STATE_TOPIC = "bigair/fuel/state"  # retained JSON; display copy only (Deci
 MANUAL_FILL_TOPIC = "bigair/fill_up/manual"  # HA button → bigair ("full")
 FILL_RESPONSE_TOPIC = "bigair/fill_up/response"  # HA form / notification reply → bigair
 FILL_RESULT_TOPIC = "bigair/fill_up/result"  # bigair → HA: what was logged, or why not
+VAN_STATE_TOPIC = "bigair/van/state"  # retained JSON: trip, battery, freshness (#64)
 ONLINE = "online"
 OFFLINE = "offline"
 
@@ -57,6 +59,7 @@ class _Sensor:
     device_class: str | None = None
     icon: str | None = None
     stale_gated: bool = False
+    state_topic: str = FUEL_STATE_TOPIC
 
 
 SENSORS = (
@@ -66,6 +69,35 @@ SENSORS = (
     _Sensor("mpg_instant_30s", "Fuel economy (30 s)", "mpg", 1, icon="mdi:speedometer"),
     _Sensor("mpg_since_full", "Fuel economy (last fill)", "mpg", 1, icon="mdi:fuel"),
 )
+
+# The phone dash's Trip and Van rows (#64): the same values as the LilyGo's screens,
+# taken from the gauge feed. Timestamps let HA show "2 minutes ago", which is the
+# freshness check. Position stays out of HA on purpose.
+VAN_SENSORS = (
+    _Sensor("trip_mi", "Trip distance", "mi", 1, "distance", state_topic=VAN_STATE_TOPIC),
+    _Sensor("trip_gal", "Trip fuel", "gal", 2, "volume", state_topic=VAN_STATE_TOPIC),
+    _Sensor(
+        "trip_mpg",
+        "Trip economy",
+        "mpg",
+        1,
+        icon="mdi:map-marker-path",
+        state_topic=VAN_STATE_TOPIC,
+    ),
+    _Sensor("van_battery_v", "Battery", "V", 2, "voltage", state_topic=VAN_STATE_TOPIC),
+    _Sensor("trip_start", "Trip started", "", 0, "timestamp", state_topic=VAN_STATE_TOPIC),
+    _Sensor("obd_ts", "Engine last seen", "", 0, "timestamp", state_topic=VAN_STATE_TOPIC),
+    _Sensor(
+        "gps_ts",
+        "GPS last fix",
+        "",
+        0,
+        "timestamp",
+        icon="mdi:crosshairs-gps",
+        state_topic=VAN_STATE_TOPIC,
+    ),
+)
+VAN_KEYS = (*(s.object_id for s in VAN_SENSORS), "ignition")
 
 _ROUNDING = {
     "tank_gal": 2,
@@ -81,15 +113,16 @@ def _sensor_config(s: _Sensor) -> dict[str, object]:
         "name": s.name,
         "object_id": s.object_id,
         "unique_id": f"bigair_{s.object_id}",
-        "state_topic": FUEL_STATE_TOPIC,
+        "state_topic": s.state_topic,
         "value_template": f"{{{{ value_json.{s.object_id} }}}}",
-        "unit_of_measurement": s.unit,
-        "state_class": "measurement",
-        "suggested_display_precision": s.precision,
         "device": DEVICE,
         "availability": [_ONLINE, _NOT_STALE] if s.stale_gated else [_ONLINE],
         "availability_mode": "all",
     }
+    if s.device_class != "timestamp":
+        config["unit_of_measurement"] = s.unit
+        config["state_class"] = "measurement"
+        config["suggested_display_precision"] = s.precision
     if s.device_class:
         config["device_class"] = s.device_class
     if s.icon:
@@ -154,6 +187,25 @@ def _last_fill_config() -> dict[str, object]:
     }
 
 
+def _ignition_config() -> dict[str, object]:
+    return {
+        "name": "Ignition",
+        "object_id": "ignition",
+        "unique_id": "bigair_ignition",
+        "state_topic": VAN_STATE_TOPIC,
+        # null (no OBD sample yet) → "None" → unknown, not "off".
+        "value_template": (
+            "{% if value_json.ignition is none %}None"
+            "{% elif value_json.ignition %}ON{% else %}OFF{% endif %}"
+        ),
+        "device_class": "power",
+        "icon": "mdi:engine",
+        "device": DEVICE,
+        "availability": [_ONLINE],
+        "availability_mode": "all",
+    }
+
+
 def _filled_to_full_config() -> dict[str, object]:
     return {
         "name": "Filled to full",
@@ -175,8 +227,14 @@ def discovery_messages() -> list[tuple[str, str]]:
             f"{DISCOVERY_PREFIX}/sensor/{NODE_ID}/{s.object_id}/config",
             json.dumps(_sensor_config(s), sort_keys=True),
         )
-        for s in SENSORS
+        for s in (*SENSORS, *VAN_SENSORS)
     ]
+    out.append(
+        (
+            f"{DISCOVERY_PREFIX}/binary_sensor/{NODE_ID}/ignition/config",
+            json.dumps(_ignition_config(), sort_keys=True),
+        )
+    )
     out.append(
         (
             f"{DISCOVERY_PREFIX}/binary_sensor/{NODE_ID}/fuel_stale/config",
@@ -238,3 +296,8 @@ def fuel_state_payload(
     payload["calibrating"] = calibrating  # 5E not yet VERIFIED (Decision #32)
     payload["fill_pending"] = fill_pending  # a detected fill awaits Dan's answer (#11)
     return json.dumps(payload, sort_keys=True)
+
+
+def van_state_payload(feed: Mapping[str, object]) -> str:
+    """The retained JSON on VAN_STATE_TOPIC: the van keys of the gauge feed, nulls kept."""
+    return json.dumps({k: feed.get(k) for k in VAN_KEYS}, sort_keys=True)

@@ -25,7 +25,9 @@ from bigair.ha_discovery import (
     FILL_RESPONSE_TOPIC,
     FILL_RESULT_TOPIC,
     MANUAL_FILL_TOPIC,
+    VAN_STATE_TOPIC,
     fuel_state_payload,
+    van_state_payload,
 )
 from bigair.influx_io import fill_up_point, fuel_point, track_point, vehicle_point
 from bigair.signals import FillSource, FillStatus, FillType, FillUp, FuelState
@@ -296,6 +298,10 @@ class FuelService:
             calibrating=not self.config.fuel_rate_verified,
             fill_pending=bool(self.prompter.pending_ids),
         )
+
+    def van_state(self, now: datetime) -> tuple[str, str]:
+        """Trip, battery and freshness for HA's phone dash (#64), from the gauge feed."""
+        return VAN_STATE_TOPIC, van_state_payload(self.gauge_feed(now))
 
     def gauge_feed(self, now: datetime) -> dict[str, object]:
         """What the dash display needs (#17). `ts` is when the service wrote it, so an

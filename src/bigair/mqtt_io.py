@@ -38,6 +38,7 @@ async def run_mqtt(
     state_payload: Callable[[], str],
     on_command: Callable[[str, bytes], object],
     drain_outbox: Callable[[], list[tuple[str, str]]] = list,
+    extra_states: Callable[[], list[tuple[str, str]]] = list,
     publish_every_s: float = 5.0,
     retry_s: float = 5.0,
 ) -> None:
@@ -55,6 +56,8 @@ async def run_mqtt(
                 async def publisher(c: aiomqtt.Client = client) -> None:
                     while True:
                         await c.publish(FUEL_STATE_TOPIC, state_payload(), qos=0, retain=True)
+                        for topic, payload in extra_states():  # e.g. the van state (#64)
+                            await c.publish(topic, payload, qos=0, retain=True)
                         await asyncio.sleep(publish_every_s)
 
                 async def outbox_sender(c: aiomqtt.Client = client) -> None:
