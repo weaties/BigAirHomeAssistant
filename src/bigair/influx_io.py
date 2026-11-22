@@ -136,6 +136,9 @@ def fuel_point(
     mpg_rolling: float | None,
     mpg_instant_30s: float | None,
     fuel_rate_gph: float | None,
+    *,
+    stale: bool | None = None,
+    calibrating: bool | None = None,
 ) -> Point:
     return Point(
         "fuel",
@@ -149,6 +152,9 @@ def fuel_point(
             "mpg_rolling": mpg_rolling,
             "mpg_instant_30s": mpg_instant_30s,
             "fuel_rate_gph": fuel_rate_gph,
+            # Lets Grafana hide a stale tank and label a calibrating one (#65).
+            "stale": stale,
+            "calibrating": calibrating,
         },
     )
 
