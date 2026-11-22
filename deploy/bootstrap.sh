@@ -189,6 +189,7 @@ tailscale_host() {
   state="$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "Unknown"' || echo Unknown)"
   if [[ "$state" == "Running" ]]; then
     echo "Tailscale: up as $(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')"
+    tailscale_preview
     return
   fi
   local authkey
@@ -199,11 +200,24 @@ tailscale_host() {
   if [[ -n "$authkey" ]]; then
     sudo tailscale up --ssh --accept-dns=false --hostname "$(hostname)" --authkey "$authkey"
     echo "Tailscale: joined with the auth key from deploy/.env"
+    tailscale_preview
   else
     echo "Tailscale installed but not logged in (state: $state). Join your tailnet with:"
     echo "  sudo tailscale up --ssh --accept-dns=false --hostname $(hostname)"
     echo "and open the login URL it prints (or set TAILSCALE_AUTHKEY in deploy/.env)."
   fi
+}
+
+# Dash preview (#62, Decision #37). The preview server has no key, so Compose
+# publishes it on 127.0.0.1 only and `tailscale serve` exposes it to the tailnet,
+# never the van LAN. `serve --bg` persists across reboots; re-running is a no-op.
+tailscale_preview() {
+  local port
+  port="$(env_get DISPLAY_PREVIEW_PORT)"
+  port="${port:-8091}"
+  sudo tailscale serve --bg --http="$port" "http://127.0.0.1:$port" >/dev/null
+  # Serve routes by Host header: the bare tailnet IP gets a 404, so print the name.
+  echo "Dash preview (tailnet only): http://$(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//'):$port/"
 }
 
 start_core() {

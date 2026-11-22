@@ -72,6 +72,10 @@ def _r(v: float | None) -> float | None:
     return None if v is None else round(v, 2)
 
 
+def _iso(ts: datetime | None) -> str | None:
+    return None if ts is None else ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class FuelService:
     def __init__(self, config: ServiceConfig, model: FuelModel | None) -> None:
         self.config = config
@@ -314,6 +318,16 @@ class FuelService:
             "mpg_since_full": _r(m.mpg_since_full if m else None),
             "trip_mpg": _r(self.trip.trip_mpg),
             "fill_pending": bool(self.prompter.pending_ids),
+            # Trip and Van dash screens (#62); the renderer judges freshness from the times.
+            "trip_mi": round(self.trip.trip_miles, 2),
+            "trip_gal": round(self.trip.trip_gal, 3),
+            "trip_start": _iso(self.trip.trip_start),
+            "obd_ts": _iso(s.ts) if (s := self.last_sample) else None,
+            "ignition": s.ignition if s else None,
+            "gps_ts": _iso(f.ts) if (f := self.last_fix) else None,
+            "gps_hdop": f.hdop if f else None,
+            "gps_lat": f.lat if f else None,
+            "gps_lon": f.lon if f else None,
         }
 
     def _fresh_battery_v(self, now: datetime) -> float | None:

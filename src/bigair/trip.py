@@ -9,7 +9,7 @@ need to). Pure: ObdSample in, buckets out.
 from __future__ import annotations
 
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -37,10 +37,19 @@ class TripMpg:
         self._trip_gal = 0.0
         self._last: ObdSample | None = None  # last ignition-on sample with speed and rate
         self.trip_id: str | None = None  # UTC start of the current trip, e.g. 2026-11-21T15:00Z
+        self.trip_start: datetime | None = None  # UTC time of the trip's first sample
 
     @property
     def buckets(self) -> tuple[float, ...]:
         return tuple(self._buckets)
+
+    @property
+    def trip_miles(self) -> float:
+        return self._trip_miles
+
+    @property
+    def trip_gal(self) -> float:
+        return self._trip_gal
 
     @property
     def trip_mpg(self) -> float | None:
@@ -56,13 +65,13 @@ class TripMpg:
             return
         last, self._last = self._last, sample
         if last is None:
-            self.trip_id = sample.ts.strftime("%Y-%m-%dT%H:%MZ")
+            self._start(sample.ts)
             return
         gap = sample.ts - last.ts
         if gap > self.new_trip_after:
             self._buckets.clear()
             self._miles = self._gal = self._trip_miles = self._trip_gal = 0.0
-            self.trip_id = sample.ts.strftime("%Y-%m-%dT%H:%MZ")
+            self._start(sample.ts)
             return
         dt = gap.total_seconds()
         if dt <= 0 or dt > MAX_STEP_S:
@@ -78,3 +87,7 @@ class TripMpg:
             mpg = self.cap_mpg if self._gal <= 0 else min(self._miles / self._gal, self.cap_mpg)
             self._buckets.append(mpg)
             self._miles = self._gal = 0.0
+
+    def _start(self, ts: datetime) -> None:
+        self.trip_id = ts.strftime("%Y-%m-%dT%H:%MZ")
+        self.trip_start = ts

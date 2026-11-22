@@ -64,14 +64,27 @@ services:
       dockerfile: deploy/Dockerfile
     image: bigair:local
     restart: unless-stopped
-    command: ["uv", "run", "--no-sync", "bigair", "display", "--port", "8090"]
-    ports: ["8090:8090"]
+    command:
+      - uv
+      - run
+      - --no-sync
+      - bigair
+      - display
+      - --port
+      - "8090"
+      - --preview-port
+      - "8091"
+    ports:
+      - "8090:8090"  # device frames, Bearer key, van LAN
+      # Keyless browser preview (#62): loopback only, so never on the van LAN;
+      # `tailscale serve` publishes it to the tailnet (Decision #37).
+      - "127.0.0.1:${DISPLAY_PREVIEW_PORT:-8091}:8091"
     environment:
       TZ: ${TZ}
       DISPLAY_API_KEY: ${DISPLAY_API_KEY}
       DISPLAY_REFRESH_SECONDS: ${DISPLAY_REFRESH_SECONDS:-60}
       DISPLAY_FULL_REFRESH_SECONDS: ${DISPLAY_FULL_REFRESH_SECONDS:-600}
-      # Drive testing: set to /run/bigair/debug.json to show Pi supply and van voltage.
+      # /run/bigair/debug.json adds Pi supply and uptime to the Van screen (#62).
       DISPLAY_DEBUG_FILE: ${DISPLAY_DEBUG_FILE:-}
       DISPLAY_GAUGE_FILE: /feed/gauge.json  # written by the bigair service (#17)
     volumes:

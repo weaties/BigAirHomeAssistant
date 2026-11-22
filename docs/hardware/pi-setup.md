@@ -176,11 +176,11 @@ Once `ssh <user>@bigair-ha.local` works from the Mac without a password, Claude
 Code can run these steps over SSH from the Mac. It confirms before each step
 that changes the Pi.
 
-## Drive testing: power debug on the dash display
+## Pi supply on the dash Van screen
 
-While the van's 5 V supply is being sorted out, the gauge can show the Pi's
-supply voltage, under-voltage and throttle flags, the van battery voltage and
-uptime in place of the trip sparkline:
+The dash's Van screen (tap the panel, pick **Van**) can show the Pi's supply
+voltage, under-voltage and throttle flags, and uptime. That needs the host
+debug feed:
 
 ```bash
 sudo install -D -m 755 deploy/host/bigair-debug.py /opt/bigair/bigair-debug.py
@@ -191,6 +191,14 @@ docker compose -f deploy/docker-compose.yml up -d display
 ```
 
 `UNDERVOLT!` means the Pi is under-voltage right now. `(UV,THR since boot)`
-means it has been at some point since boot. The van voltage appears only while
-something writes `/run/bigair/van_battery_v` (the drive logger does this).
-Clear `DISPLAY_DEBUG_FILE` to go back to the sparkline.
+means it has been at some point since boot. The van battery voltage comes from
+the fuel service (WiCAN `ATRV`). With `DISPLAY_DEBUG_FILE` empty, the Pi rows
+show `--`.
+
+## Dash preview in a browser (tailnet)
+
+The bootstrap's Tailscale step runs `tailscale serve` for the keyless dash
+preview (Decision #37). From any device on the tailnet, open
+`http://bigair-ha.<tailnet>.ts.net:8091/` (the bootstrap prints it). Use the
+name: `tailscale serve` routes by hostname, so the bare tailnet IP returns 404.
+It isn't reachable from the van LAN.
