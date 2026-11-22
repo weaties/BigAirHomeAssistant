@@ -453,3 +453,12 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     hostname, so the bare tailnet IP returns 404. Tailnet membership is the access
     control. The van LAN never sees it, and the device keeps its Bearer key.
     Like Decision #30, nothing depends on it.
+39. **2026-11-22 — The phone is the dash; HA's "Van" dashboard is provisioned from
+    git** (Dan's request, #64). The iPhone took the LilyGo's dash mount. The
+    Companion app works offline on the van Wi-Fi and already has the fill-up flow,
+    so the phone dash is a YAML-mode HA dashboard (`homeassistant/dashboards/
+    van.yaml`, built-in cards only, no HACS) rather than a new app. bigair publishes
+    the Trip and Van screen values on a retained `bigair/van/state` topic (no
+    position). **HA ignores discovery `object_id`**: entity ids come from the device
+    and entity names (`sensor.bigair_van_fuel_tank`), so renaming a discovered
+    entity breaks the dashboard; `tests/test_ha_dashboard.py` catches it.
