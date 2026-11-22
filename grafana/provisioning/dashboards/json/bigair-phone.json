@@ -337,16 +337,16 @@
         "defaults": {
           "unit": "string",
           "decimals": 0,
-          "noValue": "\u2014",
+          "noValue": "Unknown",
           "color": {
             "mode": "fixed",
-            "fixedColor": "#30a46c"
+            "fixedColor": "#6e7079"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "#30a46c",
+                "color": "#6e7079",
                 "value": null
               }
             ]
@@ -510,7 +510,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Tank",
-      "description": "Tank level over the selected range; green markers are fill-ups. Red band = under 8 gal.",
+      "description": "Tank level; parked stretches (no samples) are bridged up to a day because the tank does not change while parked. Green markers are fill-ups. Red band = under 8 gal.",
       "datasource": {
         "type": "influxdb",
         "uid": "influx-van-raw"
@@ -542,7 +542,7 @@
             "lineWidth": 2,
             "fillOpacity": 18,
             "gradientMode": "opacity",
-            "spanNulls": false,
+            "spanNulls": 86400000,
             "showPoints": "never",
             "lineInterpolation": "smooth",
             "thresholdsStyle": {
@@ -733,20 +733,19 @@
           },
           "rawQuery": true,
           "resultFormat": "table",
-          "query": "SELECT \"speed_mph\", \"mpg_30s\" FROM \"track\" WHERE $timeFilter AND \"speed_mph\" > 5 AND \"mpg_30s\" > 0"
+          "query": "SELECT mean(\"speed_mph\") AS \"speed_mph\", mean(\"mpg_30s\") AS \"mpg_30s\" FROM \"track\" WHERE $timeFilter AND \"speed_mph\" > 5 AND \"mpg_30s\" > 0 GROUP BY time($__interval) fill(none)"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "continuous-RdYlGr"
+            "mode": "fixed",
+            "fixedColor": "#14b8a6"
           },
-          "min": 8,
-          "max": 25,
           "custom": {
             "show": "points",
             "pointSize": {
-              "fixed": 5
+              "fixed": 8
             },
             "pointShape": "circle",
             "fillOpacity": 60,
@@ -795,40 +794,35 @@
               {
                 "id": "decimals",
                 "value": 1
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 30
               }
             ]
           }
         ]
       },
-      "options": {
-        "mapping": "manual",
-        "series": [
-          {
-            "frame": {
-              "matcher": {
-                "id": "byIndex",
-                "options": 0
-              }
-            },
-            "x": {
-              "matcher": {
-                "id": "byName",
-                "options": "speed_mph"
-              }
-            },
-            "y": {
-              "matcher": {
-                "id": "byName",
-                "options": "mpg_30s"
-              }
-            },
-            "color": {
-              "matcher": {
-                "id": "byName",
-                "options": "mpg_30s"
-              }
+      "interval": "10s",
+      "maxDataPoints": 4000,
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
             }
           }
+        }
+      ],
+      "options": {
+        "mapping": "auto",
+        "series": [
+          {}
         ],
         "legend": {
           "showLegend": false,
@@ -869,6 +863,8 @@
         "x": 0,
         "y": 42
       },
+      "interval": "5s",
+      "maxDataPoints": 6000,
       "targets": [
         {
           "refId": "A",
@@ -878,7 +874,7 @@
           },
           "rawQuery": true,
           "resultFormat": "table",
-          "query": "SELECT \"lat\", \"lon\", \"mpg_30s\", \"speed_mph\" FROM \"track\" WHERE $timeFilter"
+          "query": "SELECT last(\"lat\") AS \"lat\", last(\"lon\") AS \"lon\", mean(\"mpg_30s\") AS \"mpg_30s\" FROM \"track\" WHERE $timeFilter GROUP BY time($__interval) fill(none)"
         }
       ],
       "fieldConfig": {
@@ -896,9 +892,11 @@
       "options": {
         "view": {
           "id": "fit",
+          "allLayers": true,
+          "padding": 10,
           "lat": 0,
           "lon": 0,
-          "zoom": 5
+          "zoom": 16
         },
         "controls": {
           "showZoom": true,
