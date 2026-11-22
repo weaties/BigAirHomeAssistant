@@ -438,4 +438,17 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     reaches gpsd, MQTT (`localhost:1883`) and InfluxDB (`localhost:8086`) like
     Home Assistant does, so gpsd never listens on the LAN. The display container
     stays on the Compose network; it only reads the shared gauge-feed volume.
-
+36. **2026-11-21 — Touch-selectable dash screens** (Dan's request, #62). The
+    eink-screen firmware's touch menu (from HelmLog) now works in the van:
+    bigair serves `/api/display/menu` and `menu.raw` and renders by `?screen=`
+    (Fuel, Trip, Economy, Van). Unknown ids still get the fuel screen, so a
+    HelmLog id carried over from the boat never blanks the gauge (amends #29's
+    "`?screen=` ignored"). The Pi-supply debug strip moved off the fuel screen
+    to the Van screen, so the fuel screen always shows its sparkline.
+37. **2026-11-21 — The dash preview is keyless but tailnet-only** (Dan's
+    request, #62). A read-only preview server (PNGs and a screen-flipping page,
+    never `.raw` frames) runs beside the device server. Compose publishes it on
+    `127.0.0.1:8091` only, and bootstrap runs `tailscale serve --http=8091` to
+    expose it on the Pi's tailnet address. Tailnet membership is the access
+    control. The van LAN never sees it, and the device keeps its Bearer key.
+    Like Decision #30, nothing depends on it.
