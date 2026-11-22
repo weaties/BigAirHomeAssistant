@@ -70,6 +70,8 @@ def test_feed_parses_the_screen_fields() -> None:
             "ignition": True,
             "gps_ts": "2026-11-21T17:59:59Z",
             "gps_hdop": 1.2,
+            "gps_lat": 45.12345,
+            "gps_lon": -110.98765,
         }
     )
     assert s.trip_mi == 12.5 and s.trip_gal == 0.9
@@ -78,6 +80,7 @@ def test_feed_parses_the_screen_fields() -> None:
     assert s.ignition is True
     assert s.gps_updated == NOW - timedelta(seconds=1)
     assert s.gps_hdop == 1.2
+    assert s.gps_lat == 45.12345 and s.gps_lon == -110.98765
 
 
 def test_feed_without_screen_fields_still_parses() -> None:
@@ -106,12 +109,14 @@ def test_van_rows_live() -> None:
             ignition=True,
             gps_updated=NOW - timedelta(seconds=1),
             gps_hdop=0.9,
+            gps_lat=45.12345,
+            gps_lon=-110.98765,
         ),
         DebugInfo(updated=NOW, pi_5v_v=5.08, uptime_s=3900),
     )
     assert rows["Van battery"] == "14.1 V"
     assert rows["Engine"] == "ON"
-    assert rows["GPS"] == "FIX · HDOP 0.9"
+    assert rows["GPS"] == "45.123, -110.988 · HDOP 0.9"
     assert rows["Fuel service"] == "LIVE"
     assert rows["Pi supply"] == "5.08 V OK"
     assert rows["Pi uptime"] == "1h05m"
@@ -140,6 +145,12 @@ def test_van_rows_engine_off_and_never_seen() -> None:
     assert never["Engine"] == "NO DATA"
     assert never["GPS"] == "NO GPS"
     assert never["Fuel service"] == "NO FEED"
+
+
+def test_van_gps_row_without_position_or_hdop() -> None:
+    fresh = NOW - timedelta(seconds=1)
+    assert _rows(_state(gps_updated=fresh))["GPS"] == "FIX"
+    assert _rows(_state(gps_updated=fresh, gps_lat=1.0, gps_lon=2.0))["GPS"] == "1.000, 2.000"
 
 
 def test_van_rows_flag_undervoltage() -> None:

@@ -129,7 +129,7 @@ not fsynced, display copy only). It holds `ts` (when the service wrote it),
 starts after a 30 min park), `van_battery_v`, and the economy numbers
 `mpg_rolling`, `mpg_instant_30s`, `mpg_since_full` and `trip_mpg`. For the
 Trip and Van screens (#62) it also holds `trip_mi`, `trip_gal`, `trip_start`,
-`obd_ts`, `ignition`, `gps_ts` and `gps_hdop`; the renderer judges freshness
+`obd_ts`, `ignition`, `gps_ts`, `gps_hdop`, `gps_lat` and `gps_lon` (shown to 3 decimals on the Van screen); the renderer judges freshness
 from those times.
 `mpg_rolling` is `null` until the 150 mi window holds at least 50 measured
 miles: below that the model's value is the configured prior, which must never

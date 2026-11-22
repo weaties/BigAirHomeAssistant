@@ -29,6 +29,7 @@ def test_feed_without_any_input(tmp_path: Path) -> None:
     assert feed["ignition"] is None
     assert feed["gps_ts"] is None
     assert feed["gps_hdop"] is None
+    assert feed["gps_lat"] is None and feed["gps_lon"] is None
 
 
 def test_feed_carries_trip_obd_and_gps(tmp_path: Path) -> None:
@@ -39,7 +40,7 @@ def test_feed_carries_trip_obd_and_gps(tmp_path: Path) -> None:
                 ts=T0 + timedelta(seconds=i), ignition=True, speed_mph=60.0, fuel_rate_gph=4.0
             )
         )
-    svc.handle_fix(GpsFix(ts=T0 + timedelta(seconds=359), lat=1.0, lon=2.0, hdop=0.9))
+    svc.handle_fix(GpsFix(ts=T0 + timedelta(seconds=359), lat=45.123456, lon=-110.987654, hdop=0.9))
     feed = svc.gauge_feed(T0 + timedelta(seconds=361))
     assert feed["trip_mi"] == pytest.approx(6.0, abs=0.01)
     assert feed["trip_gal"] == pytest.approx(0.4, abs=0.001)
@@ -48,3 +49,4 @@ def test_feed_carries_trip_obd_and_gps(tmp_path: Path) -> None:
     assert feed["ignition"] is True
     assert feed["gps_ts"] == "2026-11-21T18:05:59Z"
     assert feed["gps_hdop"] == 0.9
+    assert feed["gps_lat"] == 45.123456 and feed["gps_lon"] == -110.987654

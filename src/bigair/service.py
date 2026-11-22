@@ -326,6 +326,8 @@ class FuelService:
             "ignition": s.ignition if s else None,
             "gps_ts": _iso(f.ts) if (f := self.last_fix) else None,
             "gps_hdop": f.hdop if f else None,
+            "gps_lat": f.lat if f else None,
+            "gps_lon": f.lon if f else None,
         }
 
     def _fresh_battery_v(self, now: datetime) -> float | None:

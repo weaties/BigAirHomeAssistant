@@ -51,6 +51,8 @@ class GaugeState:
     ignition: bool | None = None  # engine ECU answering in that sample
     gps_updated: datetime | None = None  # UTC time of the last GPS fix
     gps_hdop: float | None = None
+    gps_lat: float | None = None
+    gps_lon: float | None = None
 
 
 def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
@@ -90,6 +92,8 @@ def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
         ignition=None if ignition is None else bool(ignition),
         gps_updated=when("gps_ts"),
         gps_hdop=num("gps_hdop"),
+        gps_lat=num("gps_lat"),
+        gps_lon=num("gps_lon"),
     )
 
 
@@ -443,7 +447,12 @@ def van_rows(
     elif now - state.gps_updated > GPS_FRESH:
         gps = f"NO FIX since {_local(state.gps_updated, tz)}"
     else:
-        gps = "FIX" if state.gps_hdop is None else f"FIX · HDOP {state.gps_hdop:.1f}"
+        parts = []
+        if state.gps_lat is not None and state.gps_lon is not None:
+            parts.append(f"{state.gps_lat:.3f}, {state.gps_lon:.3f}")
+        if state.gps_hdop is not None:
+            parts.append(f"HDOP {state.gps_hdop:.1f}")
+        gps = " · ".join(parts) or "FIX"
 
     if state.updated is None:
         service = "NO FEED"
