@@ -455,7 +455,8 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     Like Decision #30, nothing depends on it.
 38. **2026-11-22 — Grafana allows anonymous Viewer access** (Dan's request, #65).
     The phone opens the `bigair-phone` dashboard in Safari (Add to Home Screen,
-    `?kiosk`) with no login. Viewer can't edit or add dashboards. Grafana is
+    `?kiosk`) with no login, on the van Wi-Fi or over Tailscale (Dan's request).
+    Viewer can't edit or add dashboards (an API write returns 403). Grafana is
     reachable only on the van LAN and the tailnet, but anyone on the van Wi-Fi can
     see the dashboards, including the GPS track map. `GRAFANA_ANONYMOUS=false` in
     `deploy/.env` turns it off. The `fuel` measurement gained `stale` and

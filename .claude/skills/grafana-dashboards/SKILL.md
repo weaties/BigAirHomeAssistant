@@ -53,8 +53,13 @@ grafana/provisioning/
 
 ## Phone dashboard rules (`bigair-phone`)
 
-- Open as `http://bigair-ha.local:3000/d/bigair-phone?kiosk` on the van Wi-Fi;
-  anonymous Viewer access means no login (Decision #38).
+- Open as `http://bigair-ha.local:3000/d/bigair-phone?kiosk` on the van Wi-Fi, or
+  `http://bigair-ha.<tailnet>.ts.net:3000/d/bigair-phone?kiosk` over Tailscale.
+  Anonymous Viewer access means no login either way (Decision #38). Grafana
+  publishes 3000 on all interfaces, so the tailnet reaches it directly; unlike the
+  loopback-only dash preview (Decision #37) it needs no `tailscale serve`.
+- Cross-links between HA and Grafana use `bigair-ha.local`, which only resolves on
+  the van Wi-Fi. The tailnet name can't go in this public repo.
 - Panels stack in `gridPos` order (y, then x) below ~769 px, so lay out the "Now"
   row in reading order.
 - **Live values never show stale numbers.** Query `last("tank_gal"), last("stale")`
