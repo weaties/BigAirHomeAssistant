@@ -4,6 +4,10 @@ The device runs the eink-screen firmware (~/src/eink-screen): a thin client
 that fetches a pre-rendered 960x540 frame and blits it (CLAUDE.md Decision
 #29). All layout lives here, so restyling never needs a reflash.
 
+Screens (#62): the firmware's touch menu fetches `menu_regions()` and the
+`render_menu()` frame, then asks for frames with `?screen=<id>`. Ids are in
+SCREENS; anything else renders the fuel screen.
+
 Pure functions: state + time in, image/bytes out. No I/O.
 """
 
@@ -38,6 +42,13 @@ class GaugeState:
     mpg_since_full: float | None = None  # last full-to-full interval
     trip_mpg: float | None = None  # current trip average
     fill_pending: bool = False  # a detected fill awaits Dan's answer (#11, Decision #34)
+    trip_mi: float = 0.0  # current trip (#62)
+    trip_gal: float = 0.0
+    trip_start: datetime | None = None  # UTC
+    obd_updated: datetime | None = None  # UTC time of the last WiCAN sample
+    ignition: bool | None = None  # engine ECU answering in that sample
+    gps_updated: datetime | None = None  # UTC time of the last GPS fix
+    gps_hdop: float | None = None
 
 
 def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
@@ -47,10 +58,15 @@ def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
         v = d.get(key)
         return None if v is None else float(v)
 
+    def when(key: str) -> datetime | None:
+        v = d.get(key)
+        return None if v is None else _parse_ts(str(v))
+
     try:
-        updated = datetime.strptime(str(d["ts"]), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        updated = _parse_ts(str(d["ts"]))
     except (KeyError, ValueError) as e:
         raise ValueError(f"bad gauge feed: {e}") from e
+    ignition = d.get("ignition")
     return GaugeState(
         tank_gal=num("tank_gal"),
         range_mi=num("range_mi"),
@@ -65,7 +81,18 @@ def gauge_from_dict(d: dict[str, Any]) -> GaugeState:
         mpg_since_full=num("mpg_since_full"),
         trip_mpg=num("trip_mpg"),
         fill_pending=bool(d.get("fill_pending", False)),
+        trip_mi=num("trip_mi") or 0.0,
+        trip_gal=num("trip_gal") or 0.0,
+        trip_start=when("trip_start"),
+        obd_updated=when("obd_ts"),
+        ignition=None if ignition is None else bool(ignition),
+        gps_updated=when("gps_ts"),
+        gps_hdop=num("gps_hdop"),
     )
+
+
+def _parse_ts(v: str) -> datetime:
+    return datetime.strptime(v, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
 
 
 DEBUG_STALE_AFTER = timedelta(seconds=30)
@@ -119,22 +146,24 @@ def debug_text(info: DebugInfo, now: datetime) -> str:
     age = (now - info.updated).total_seconds()
     prefix = f"DEBUG STALE {age:.0f}s | " if age > DEBUG_STALE_AFTER.total_seconds() else ""
     pi = "--" if info.pi_5v_v is None else f"{info.pi_5v_v:.2f}"
-    if info.undervolt_now:
-        health = "UNDERVOLT!"
-    else:
-        past = [
-            n
-            for n, f in (("UV", info.undervolt_since_boot), ("THR", info.throttled_since_boot))
-            if f
-        ]
-        health = f"({','.join(past)} since boot)" if past else "OK"
     van = "--" if info.van_battery_v is None else f"{info.van_battery_v:.1f}"
-    if info.uptime_s is None:
-        up = "--"
-    else:
-        mins = int(info.uptime_s // 60)
-        up = f"{mins // 60}h{mins % 60:02d}m" if mins >= 60 else f"{mins}m"
-    return f"{prefix}PI {pi}V {health} | VAN {van}V | UP {up}"
+    up = "--" if info.uptime_s is None else _dur(info.uptime_s)
+    return f"{prefix}PI {pi}V {_pi_health(info)} | VAN {van}V | UP {up}"
+
+
+def _pi_health(info: DebugInfo) -> str:
+    if info.undervolt_now:
+        return "UNDERVOLT!"
+    past = [
+        n for n, f in (("UV", info.undervolt_since_boot), ("THR", info.throttled_since_boot)) if f
+    ]
+    return f"({','.join(past)} since boot)" if past else "OK"
+
+
+def _dur(seconds: float) -> str:
+    """45m, 1h05m."""
+    mins = int(seconds // 60)
+    return f"{mins // 60}h{mins % 60:02d}m" if mins >= 60 else f"{mins}m"
 
 
 def is_stale(state: GaugeState, now: datetime, max_age: timedelta = STALE_AFTER) -> bool:
@@ -163,7 +192,12 @@ def _local(ts: datetime, tz: str) -> str:
 
 
 def _sparkline(
-    draw: ImageDraw.ImageDraw, values: tuple[float, ...], box: tuple[int, int, int, int]
+    draw: ImageDraw.ImageDraw,
+    values: tuple[float, ...],
+    box: tuple[int, int, int, int],
+    *,
+    ink: int = BLACK,
+    scale_labels: bool = False,
 ) -> None:
     x0, y0, x1, y1 = box
     draw.line([(x0, y1), (x1, y1)], fill=GREY, width=2)
@@ -174,7 +208,10 @@ def _sparkline(
     hi = max(values) + 2.0
     step = (x1 - x0) / (len(values) - 1)
     pts = [(x0 + i * step, y1 - (v - lo) / (hi - lo) * (y1 - y0)) for i, v in enumerate(values)]
-    draw.line(pts, fill=BLACK, width=5, joint="curve")
+    draw.line(pts, fill=ink, width=5, joint="curve")
+    if scale_labels:
+        draw.text((x1 + 8, y0 - 4), f"{max(values):.0f}", font=_font(24), fill=GREY)
+        draw.text((x1 + 8, y1 - 24), f"{min(values):.0f}", font=_font(24), fill=GREY)
 
 
 def mpg_lines(state: GaugeState) -> tuple[str, str, str]:
@@ -212,9 +249,8 @@ def render_gauge(
     *,
     tz: str,
     low_fuel_gal: float = 8.0,
-    debug: DebugInfo | None = None,
 ) -> Image.Image:
-    """Render the fuel gauge: tank gallons + level bar, range, trip-mpg sparkline, status."""
+    """Fuel screen: tank gallons + level bar, range, economy line, trip-mpg sparkline."""
     img = Image.new("L", (WIDTH, HEIGHT), WHITE)
     draw = ImageDraw.Draw(img)
     stale = is_stale(state, now)
@@ -260,19 +296,23 @@ def render_gauge(
         draw.line([(30, 120), (600, 120)], fill=ink, width=8)
         draw.line([(30, 310), (700, 310)], fill=BLACK, width=8)
 
-    if debug is None:
-        _sparkline(draw, state.mpg_spark, (40, 380, 920, 480))
-    else:
-        # Drive-testing mode: the debug strip takes the sparkline's place.
-        draw.rectangle((20, 388, WIDTH - 20, 490), outline=BLACK, width=3)
-        line = debug_text(debug, now)
-        font = fit_font(draw, line, max_width=WIDTH - 80, start=40)
-        draw.text((40, 400), line, font=font, fill=BLACK)
-        draw.text((40, 445), f"debug @ {_local(debug.updated, tz)}", font=_font(28), fill=GREY)
+    _sparkline(draw, state.mpg_spark, (40, 380, 920, 480))
+    _footer(draw, state, now, tz, "FUEL")
+    return img
 
-    # Footer: local clock + status.
+
+def _footer(
+    draw: ImageDraw.ImageDraw, state: GaugeState, now: datetime, tz: str, title: str
+) -> None:
+    """Shared footer: local clock, screen name, fuel status."""
     draw.line([(0, 495), (WIDTH, 495)], fill=GREY, width=2)
     draw.text((40, 502), _local(now, tz), font=_font(32), fill=BLACK)
+    draw.text(
+        ((WIDTH - draw.textlength(title, font=_font(28))) / 2, 504),
+        title,
+        font=_font(28),
+        fill=GREY,
+    )
     status = status_text(state, now, tz)
     draw.text(
         (WIDTH - 40 - draw.textlength(status, font=_font(32)), 502),
@@ -280,6 +320,210 @@ def render_gauge(
         font=_font(32),
         fill=BLACK,
     )
+
+
+def _num(v: float | None, fmt: str = ".1f") -> str:
+    return "--" if v is None else format(v, fmt)
+
+
+def trip_lines(state: GaugeState, now: datetime) -> tuple[str, str, str, str]:
+    """(trip mpg, miles, gallons, elapsed) for the trip screen."""
+    elapsed = "--" if state.trip_start is None else _dur((now - state.trip_start).total_seconds())
+    return (
+        _num(state.trip_mpg),
+        f"{state.trip_mi:.1f} mi",
+        f"{state.trip_gal:.2f} gal",
+        elapsed,
+    )
+
+
+def render_trip(state: GaugeState, now: datetime, *, tz: str) -> Image.Image:
+    """Trip screen: trip mpg, miles, fuel, elapsed time, sparkline."""
+    img = Image.new("L", (WIDTH, HEIGHT), WHITE)
+    draw = ImageDraw.Draw(img)
+    ink = GREY if is_stale(state, now) else BLACK  # an old feed never reads as current
+    mpg, miles, gal, elapsed = trip_lines(state, now)
+    draw.text((40, 30), mpg, font=_font(170), fill=ink)
+    draw.text(
+        (40 + draw.textlength(mpg, font=_font(170)) + 20, 140), "mpg", font=_font(60), fill=ink
+    )
+    draw.text((44, 220), "trip average", font=_font(32), fill=GREY)
+    for i, (value, label) in enumerate(
+        ((miles, "driven"), (gal, "used"), (elapsed, "since start"))
+    ):
+        y = 40 + i * 92
+        draw.text((600, y), value, font=_font(60), fill=ink)
+        draw.text((604, y + 62), label, font=_font(22), fill=GREY)
+    draw.text((40, 300), "trip mpg, 2 mi buckets", font=_font(24), fill=GREY)
+    _sparkline(draw, state.mpg_spark, (40, 340, 880, 480), ink=ink, scale_labels=True)
+    _footer(draw, state, now, tz, "TRIP")
+    return img
+
+
+def render_economy(state: GaugeState, now: datetime, *, tz: str) -> Image.Image:
+    """Economy screen: 150 mi average, instant / trip / since-full, large sparkline."""
+    img = Image.new("L", (WIDTH, HEIGHT), WHITE)
+    draw = ImageDraw.Draw(img)
+    ink = GREY if is_stale(state, now) else BLACK
+    big, label, _ = mpg_lines(state)
+    draw.text((40, 30), big, font=_font(170), fill=ink)
+    draw.text(
+        (40 + draw.textlength(big, font=_font(170)) + 20, 140), "mpg", font=_font(60), fill=ink
+    )
+    draw.text((44, 220), label, font=_font(32), fill=GREY)
+    rows = (
+        (state.mpg_instant, "last 30 s"),
+        (state.trip_mpg, "this trip"),
+        (state.mpg_since_full, "last full-to-full"),
+    )
+    for i, (value, row_label) in enumerate(rows):
+        y = 40 + i * 92
+        draw.text((600, y), _num(value), font=_font(60), fill=ink)
+        draw.text((604, y + 62), row_label, font=_font(22), fill=GREY)
+    draw.text((40, 300), "trip mpg, 2 mi buckets", font=_font(24), fill=GREY)
+    _sparkline(draw, state.mpg_spark, (40, 340, 880, 480), ink=ink, scale_labels=True)
+    _footer(draw, state, now, tz, "ECONOMY")
+    return img
+
+
+OBD_FRESH = timedelta(seconds=60)
+GPS_FRESH = timedelta(seconds=30)
+
+
+def van_rows(
+    state: GaugeState, debug: DebugInfo | None, now: datetime, *, tz: str
+) -> list[tuple[str, str]]:
+    """(label, value) rows for the van screen. Old inputs say so; nothing is guessed."""
+    feed_live = state.updated is not None and now - state.updated <= STALE_AFTER
+    volts = state.van_battery_v if feed_live else None
+    if volts is None and debug is not None:
+        volts = debug.van_battery_v
+
+    if state.obd_updated is None:
+        engine = "NO DATA"
+    elif now - state.obd_updated > OBD_FRESH:
+        engine = f"NO DATA since {_local(state.obd_updated, tz)}"
+    else:
+        engine = "ON" if state.ignition else "OFF"
+
+    if state.gps_updated is None:
+        gps = "NO GPS"
+    elif now - state.gps_updated > GPS_FRESH:
+        gps = f"NO FIX since {_local(state.gps_updated, tz)}"
+    else:
+        gps = "FIX" if state.gps_hdop is None else f"FIX · HDOP {state.gps_hdop:.1f}"
+
+    if state.updated is None:
+        service = "NO FEED"
+    elif not feed_live:
+        service = f"DOWN since {_local(state.updated, tz)}"
+    else:
+        service = "LIVE"
+
+    if debug is None:
+        supply = uptime = "--"
+    elif now - debug.updated > DEBUG_STALE_AFTER:
+        supply = uptime = f"STALE since {_local(debug.updated, tz)}"
+    else:
+        supply = f"{_num(debug.pi_5v_v, '.2f')} V {_pi_health(debug)}"
+        uptime = "--" if debug.uptime_s is None else _dur(debug.uptime_s)
+
+    return [
+        ("Van battery", "--" if volts is None else f"{volts:.1f} V"),
+        ("Engine", engine),
+        ("GPS", gps),
+        ("Fuel service", service),
+        ("Pi supply", supply),
+        ("Pi uptime", uptime),
+    ]
+
+
+def render_van(
+    state: GaugeState, now: datetime, *, tz: str, debug: DebugInfo | None = None
+) -> Image.Image:
+    """Van screen: battery, engine/OBD, GPS, service and Pi supply health."""
+    img = Image.new("L", (WIDTH, HEIGHT), WHITE)
+    draw = ImageDraw.Draw(img)
+    for i, (label, value) in enumerate(van_rows(state, debug, now, tz=tz)):
+        y = 28 + i * 76
+        draw.text((40, y + 8), label, font=_font(36), fill=GREY)
+        font = fit_font(draw, value, max_width=WIDTH - 360 - 40, start=50)
+        draw.text((360, y), value, font=font, fill=BLACK)
+        if i:
+            draw.line([(40, y - 8), (WIDTH - 40, y - 8)], fill=GREY, width=1)
+    _footer(draw, state, now, tz, "VAN")
+    return img
+
+
+SCREENS: tuple[tuple[str, str], ...] = (
+    ("fuel", "Fuel"),
+    ("trip", "Trip"),
+    ("economy", "Economy"),
+    ("van", "Van"),
+)
+DEFAULT_SCREEN = "fuel"
+_SCREEN_HINTS = {
+    "fuel": "tank and range",
+    "trip": "this trip",
+    "economy": "mpg detail",
+    "van": "power, GPS, OBD",
+}
+
+
+def render_screen(
+    screen: str,
+    state: GaugeState,
+    now: datetime,
+    *,
+    tz: str,
+    debug: DebugInfo | None = None,
+) -> Image.Image:
+    """Render one screen by id; unknown ids (e.g. a HelmLog id) get the fuel screen."""
+    if screen == "trip":
+        return render_trip(state, now, tz=tz)
+    if screen == "economy":
+        return render_economy(state, now, tz=tz)
+    if screen == "van":
+        return render_van(state, now, tz=tz, debug=debug)
+    return render_gauge(state, now, tz=tz)
+
+
+def menu_regions() -> list[dict[str, int | str]]:
+    """Tap regions for the firmware's menu, 2x2 tiles in 960x540 space."""
+    regions: list[dict[str, int | str]] = []
+    for i, (sid, name) in enumerate(SCREENS):
+        col, row = i % 2, i // 2
+        regions.append(
+            {"x": 30 + col * 470, "y": 100 + row * 215, "w": 430, "h": 195, "id": sid, "name": name}
+        )
+    return regions
+
+
+def render_menu() -> Image.Image:
+    """The touch menu frame; its tiles match menu_regions()."""
+    img = Image.new("L", (WIDTH, HEIGHT), WHITE)
+    draw = ImageDraw.Draw(img)
+    draw.text((30, 25), "Choose a screen", font=_font(48), fill=BLACK)
+    hint = "tap outside to cancel"
+    draw.text(
+        (WIDTH - 30 - draw.textlength(hint, font=_font(28)), 40), hint, font=_font(28), fill=GREY
+    )
+    for r in menu_regions():
+        x, y, w, h = int(r["x"]), int(r["y"]), int(r["w"]), int(r["h"])
+        draw.rounded_rectangle((x, y, x + w, y + h), radius=18, outline=BLACK, width=5)
+        name, sub = str(r["name"]), _SCREEN_HINTS[str(r["id"])]
+        draw.text(
+            (x + (w - draw.textlength(name, font=_font(72))) / 2, y + 40),
+            name,
+            font=_font(72),
+            fill=BLACK,
+        )
+        draw.text(
+            (x + (w - draw.textlength(sub, font=_font(28))) / 2, y + 130),
+            sub,
+            font=_font(28),
+            fill=GREY,
+        )
     return img
 
 

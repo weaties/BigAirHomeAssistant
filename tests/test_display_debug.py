@@ -11,7 +11,7 @@ from bigair.display_render import (
     GaugeState,
     debug_from_dict,
     debug_text,
-    render_gauge,
+    render_screen,
 )
 
 NOW = datetime(2026, 11, 20, 17, 30, tzinfo=UTC)
@@ -87,11 +87,19 @@ def test_from_dict_rejects_garbage(bad: dict[str, object]) -> None:
         debug_from_dict(bad)
 
 
-def test_debug_strip_changes_the_frame() -> None:
+def test_debug_info_changes_the_van_screen() -> None:
     state = GaugeState(tank_gal=None, range_mi=None)
-    plain = render_gauge(state, NOW, tz="UTC")
-    with_debug = render_gauge(state, NOW, tz="UTC", debug=_info())
+    plain = render_screen("van", state, NOW, tz="UTC")
+    with_debug = render_screen("van", state, NOW, tz="UTC", debug=_info())
     assert plain.tobytes() != with_debug.tobytes()
+
+
+def test_fuel_screen_no_longer_carries_the_debug_strip() -> None:
+    """Pi supply moved to the Van screen (#62); the fuel screen keeps its sparkline."""
+    state = GaugeState(tank_gal=None, range_mi=None)
+    plain = render_screen("fuel", state, NOW, tz="UTC")
+    with_debug = render_screen("fuel", state, NOW, tz="UTC", debug=_info())
+    assert plain.tobytes() == with_debug.tobytes()
 
 
 def test_file_reader_returns_none_without_a_usable_file(tmp_path: object) -> None:
