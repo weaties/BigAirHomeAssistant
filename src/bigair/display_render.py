@@ -13,6 +13,7 @@ Pure functions: state + time in, image/bytes out. No I/O.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -25,6 +26,7 @@ WIDTH, HEIGHT = 960, 540
 FRAME_BYTES = WIDTH * HEIGHT // 2  # 259200, the firmware's EPD_FB_SIZE
 STALE_AFTER = timedelta(minutes=5)
 BLACK, WHITE, GREY = 0, 255, 160
+FOOTER_Y = 478  # footer rule; content stays above it
 
 
 @dataclass(frozen=True)
@@ -202,7 +204,7 @@ def _sparkline(
     x0, y0, x1, y1 = box
     draw.line([(x0, y1), (x1, y1)], fill=GREY, width=2)
     if len(values) < 2:
-        draw.text((x0, y0 + 20), "trip mpg: not enough data yet", font=_font(28), fill=GREY)
+        draw.text((x0, y0 + 10), "trip mpg: not enough data yet", font=_font(42), fill=GREY)
         return
     lo = max(min(values) - 2.0, 0.0)  # scale to this trip's own range
     hi = max(values) + 2.0
@@ -210,8 +212,8 @@ def _sparkline(
     pts = [(x0 + i * step, y1 - (v - lo) / (hi - lo) * (y1 - y0)) for i, v in enumerate(values)]
     draw.line(pts, fill=ink, width=5, joint="curve")
     if scale_labels:
-        draw.text((x1 + 8, y0 - 4), f"{max(values):.0f}", font=_font(24), fill=GREY)
-        draw.text((x1 + 8, y1 - 24), f"{min(values):.0f}", font=_font(24), fill=GREY)
+        draw.text((x1 + 8, y0 - 6), f"{max(values):.0f}", font=_font(36), fill=GREY)
+        draw.text((x1 + 8, y1 - 36), f"{min(values):.0f}", font=_font(36), fill=GREY)
 
 
 def mpg_lines(state: GaugeState) -> tuple[str, str, str]:
@@ -259,24 +261,15 @@ def render_gauge(
     # Fuel band. Low fuel is drawn inverted (B/W panel has no warning colour).
     ink = WHITE if low else BLACK
     if low:
-        draw.rectangle((0, 0, WIDTH, 250), fill=BLACK)
+        draw.rectangle((0, 0, WIDTH, 255), fill=BLACK)
     tank = "--" if state.tank_gal is None else f"{state.tank_gal:.1f}"
     draw.text((40, 30), tank, font=_font(170), fill=ink)
     draw.text(
         (40 + draw.textlength(tank, font=_font(170)) + 20, 140), "gal", font=_font(60), fill=ink
     )
 
-    # Level bar.
-    bx0, by0, bx1, by1 = 640, 70, 920, 180
-    draw.rectangle((bx0, by0, bx1, by1), outline=ink, width=5)
-    if state.tank_gal is not None:
-        frac = min(max(state.tank_gal / state.capacity_gal, 0.0), 1.0)
-        draw.rectangle(
-            (bx0 + 8, by0 + 8, bx0 + 8 + int((bx1 - bx0 - 16) * frac), by1 - 8), fill=ink
-        )
-        draw.text(
-            (bx0, by1 + 10), f"{frac:.0%} of {state.capacity_gal:.0f}", font=_font(32), fill=ink
-        )
+    # Analog fuel gauge: E at 9 o'clock, F at 3 o'clock, needle at the level.
+    _arc_gauge(draw, state, ink)
 
     # Range.
     rng = "--" if state.range_mi is None else f"{state.range_mi:.0f}"
@@ -284,19 +277,19 @@ def render_gauge(
 
     # Economy block (right of the range): measured 150 mi average, then details.
     big, label, detail = mpg_lines(state)
-    draw.text((600, 258), big, font=_font(72), fill=BLACK)
+    draw.text((620, 258), big, font=_font(72), fill=BLACK)
     draw.text(
-        (600 + draw.textlength(big, font=_font(72)) + 12, 290), "mpg", font=_font(32), fill=BLACK
+        (620 + draw.textlength(big, font=_font(72)) + 12, 282), "mpg", font=_font(48), fill=BLACK
     )
-    draw.text((604, 336), label, font=_font(24), fill=GREY)
-    draw.text((40, 352), detail, font=_font(26), fill=BLACK)
+    draw.text((624, 338), label, font=_font(36), fill=GREY)
+    draw.text((40, 352), detail, font=fit_font(draw, detail, max_width=560, start=39), fill=BLACK)
 
     # Stale: strike through the numbers so an old value never reads as current.
     if stale and state.tank_gal is not None:
         draw.line([(30, 120), (600, 120)], fill=ink, width=8)
         draw.line([(30, 310), (700, 310)], fill=BLACK, width=8)
 
-    _sparkline(draw, state.mpg_spark, (40, 380, 920, 480))
+    _sparkline(draw, state.mpg_spark, (40, 405, 920, 468))
     _footer(draw, state, now, tz, "FUEL")
     return img
 
@@ -304,21 +297,60 @@ def render_gauge(
 def _footer(
     draw: ImageDraw.ImageDraw, state: GaugeState, now: datetime, tz: str, title: str
 ) -> None:
-    """Shared footer: local clock, screen name, fuel status."""
-    draw.line([(0, 495), (WIDTH, 495)], fill=GREY, width=2)
-    draw.text((40, 502), _local(now, tz), font=_font(32), fill=BLACK)
-    draw.text(
-        ((WIDTH - draw.textlength(title, font=_font(28))) / 2, 504),
-        title,
-        font=_font(28),
-        fill=GREY,
-    )
+    """Shared footer: local clock, screen name (when it fits), fuel status."""
+    draw.line([(0, FOOTER_Y), (WIDTH, FOOTER_Y)], fill=GREY, width=2)
+    y = FOOTER_Y + 6
+    clock = _local(now, tz)
+    draw.text((30, y), clock, font=_font(48), fill=BLACK)
+    clock_end = 30 + draw.textlength(clock, font=_font(48))
     status = status_text(state, now, tz)
+    font = fit_font(draw, status, max_width=WIDTH - clock_end - 70, start=48)
+    status_x = WIDTH - 30 - draw.textlength(status, font=font)
     draw.text(
-        (WIDTH - 40 - draw.textlength(status, font=_font(32)), 502),
-        status,
-        font=_font(32),
-        fill=BLACK,
+        (status_x, y + (48 - int(getattr(font, "size", 48))) // 2), status, font=font, fill=BLACK
+    )
+    title_w = draw.textlength(title, font=_font(42))
+    title_x = (WIDTH - title_w) / 2
+    if title_x > clock_end + 24 and title_x + title_w < status_x - 24:
+        draw.text((title_x, y + 4), title, font=_font(42), fill=GREY)
+
+
+def needle_angle(frac: float) -> float:
+    """PIL angle for a tank fraction: 180 (E, 9 o'clock) through 270 (top) to 360 (F)."""
+    return 180.0 + 180.0 * min(max(frac, 0.0), 1.0)
+
+
+ARC_CX, ARC_CY, ARC_R = 780, 192, 150
+
+
+def _arc_gauge(draw: ImageDraw.ImageDraw, state: GaugeState, ink: int) -> None:
+    cx, cy, r = ARC_CX, ARC_CY, ARC_R
+    draw.arc((cx - r, cy - r, cx + r, cy + r), 180, 360, fill=ink, width=6)  # the dial
+    for i in range(5):  # E, 1/4, 1/2, 3/4, F
+        a = math.radians(needle_angle(i / 4))
+        inner = r - (34 if i % 2 == 0 else 22)
+        draw.line(
+            [
+                (cx + inner * math.cos(a), cy + inner * math.sin(a)),
+                (cx + r * math.cos(a), cy + r * math.sin(a)),
+            ],
+            fill=ink,
+            width=6,
+        )
+    draw.text((cx - r - 6, cy + 6), "E", font=_font(42), fill=ink)
+    draw.text((cx + r - 22, cy + 6), "F", font=_font(42), fill=ink)
+    hub = 14
+    if state.tank_gal is None:
+        draw.ellipse((cx - hub, cy - hub, cx + hub, cy + hub), outline=ink, width=4)
+        return  # no needle without a level: never a confident guess
+    frac = state.tank_gal / state.capacity_gal
+    a = math.radians(needle_angle(frac))
+    tip = r - 16
+    draw.line([(cx, cy), (cx + tip * math.cos(a), cy + tip * math.sin(a))], fill=ink, width=10)
+    draw.ellipse((cx - hub, cy - hub, cx + hub, cy + hub), fill=ink)
+    pct = f"{min(max(frac, 0.0), 1.0):.0%}"
+    draw.text(
+        (cx - draw.textlength(pct, font=_font(36)) / 2, cy + 18), pct, font=_font(36), fill=ink
     )
 
 
@@ -347,15 +379,15 @@ def render_trip(state: GaugeState, now: datetime, *, tz: str) -> Image.Image:
     draw.text(
         (40 + draw.textlength(mpg, font=_font(170)) + 20, 140), "mpg", font=_font(60), fill=ink
     )
-    draw.text((44, 220), "trip average", font=_font(32), fill=GREY)
+    draw.text((44, 212), "trip average", font=_font(48), fill=GREY)
     for i, (value, label) in enumerate(
         ((miles, "driven"), (gal, "used"), (elapsed, "since start"))
     ):
-        y = 40 + i * 92
-        draw.text((600, y), value, font=_font(60), fill=ink)
-        draw.text((604, y + 62), label, font=_font(22), fill=GREY)
-    draw.text((40, 300), "trip mpg, 2 mi buckets", font=_font(24), fill=GREY)
-    _sparkline(draw, state.mpg_spark, (40, 340, 880, 480), ink=ink, scale_labels=True)
+        y = 14 + i * 100
+        draw.text((600, y), value, font=_font(56), fill=ink)
+        draw.text((604, y + 58), label, font=_font(33), fill=GREY)
+    draw.text((40, 290), "trip mpg, 2 mi buckets", font=_font(36), fill=GREY)
+    _sparkline(draw, state.mpg_spark, (40, 345, 870, 466), ink=ink, scale_labels=True)
     _footer(draw, state, now, tz, "TRIP")
     return img
 
@@ -370,18 +402,18 @@ def render_economy(state: GaugeState, now: datetime, *, tz: str) -> Image.Image:
     draw.text(
         (40 + draw.textlength(big, font=_font(170)) + 20, 140), "mpg", font=_font(60), fill=ink
     )
-    draw.text((44, 220), label, font=_font(32), fill=GREY)
+    draw.text((44, 212), label, font=_font(48), fill=GREY)
     rows = (
         (state.mpg_instant, "last 30 s"),
         (state.trip_mpg, "this trip"),
         (state.mpg_since_full, "last full-to-full"),
     )
     for i, (value, row_label) in enumerate(rows):
-        y = 40 + i * 92
-        draw.text((600, y), _num(value), font=_font(60), fill=ink)
-        draw.text((604, y + 62), row_label, font=_font(22), fill=GREY)
-    draw.text((40, 300), "trip mpg, 2 mi buckets", font=_font(24), fill=GREY)
-    _sparkline(draw, state.mpg_spark, (40, 340, 880, 480), ink=ink, scale_labels=True)
+        y = 14 + i * 100
+        draw.text((600, y), _num(value), font=_font(56), fill=ink)
+        draw.text((604, y + 58), row_label, font=_font(33), fill=GREY)
+    draw.text((40, 290), "trip mpg, 2 mi buckets", font=_font(36), fill=GREY)
+    _sparkline(draw, state.mpg_spark, (40, 345, 870, 466), ink=ink, scale_labels=True)
     _footer(draw, state, now, tz, "ECONOMY")
     return img
 
@@ -445,12 +477,12 @@ def render_van(
     img = Image.new("L", (WIDTH, HEIGHT), WHITE)
     draw = ImageDraw.Draw(img)
     for i, (label, value) in enumerate(van_rows(state, debug, now, tz=tz)):
-        y = 28 + i * 76
-        draw.text((40, y + 8), label, font=_font(36), fill=GREY)
-        font = fit_font(draw, value, max_width=WIDTH - 360 - 40, start=50)
-        draw.text((360, y), value, font=font, fill=BLACK)
+        y = 10 + i * 78
+        draw.text((30, y + 6), label, font=_font(54), fill=GREY)
+        font = fit_font(draw, value, max_width=WIDTH - 400 - 30, start=56)
+        draw.text((400, y + 4), value, font=font, fill=BLACK)
         if i:
-            draw.line([(40, y - 8), (WIDTH - 40, y - 8)], fill=GREY, width=1)
+            draw.line([(30, y - 4), (WIDTH - 30, y - 4)], fill=GREY, width=1)
     _footer(draw, state, now, tz, "VAN")
     return img
 
@@ -506,22 +538,22 @@ def render_menu() -> Image.Image:
     draw.text((30, 25), "Choose a screen", font=_font(48), fill=BLACK)
     hint = "tap outside to cancel"
     draw.text(
-        (WIDTH - 30 - draw.textlength(hint, font=_font(28)), 40), hint, font=_font(28), fill=GREY
+        (WIDTH - 30 - draw.textlength(hint, font=_font(42)), 30), hint, font=_font(42), fill=GREY
     )
     for r in menu_regions():
         x, y, w, h = int(r["x"]), int(r["y"]), int(r["w"]), int(r["h"])
         draw.rounded_rectangle((x, y, x + w, y + h), radius=18, outline=BLACK, width=5)
         name, sub = str(r["name"]), _SCREEN_HINTS[str(r["id"])]
         draw.text(
-            (x + (w - draw.textlength(name, font=_font(72))) / 2, y + 40),
+            (x + (w - draw.textlength(name, font=_font(72))) / 2, y + 30),
             name,
             font=_font(72),
             fill=BLACK,
         )
         draw.text(
-            (x + (w - draw.textlength(sub, font=_font(28))) / 2, y + 130),
+            (x + (w - draw.textlength(sub, font=_font(42))) / 2, y + 125),
             sub,
-            font=_font(28),
+            font=_font(42),
             fill=GREY,
         )
     return img

@@ -108,3 +108,22 @@ def test_low_fuel_is_drawn_inverted() -> None:
     normal = ImageStat.Stat(render_gauge(_fresh(30.0), NOW, tz="UTC")).mean[0]
     low = ImageStat.Stat(render_gauge(_fresh(5.0), NOW, tz="UTC")).mean[0]
     assert low < normal - 40
+
+
+# --- analog arc gauge ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("frac", "deg"), [(0.0, 180.0), (0.5, 270.0), (1.0, 360.0), (-0.2, 180.0), (1.3, 360.0)]
+)
+def test_needle_sweeps_e_to_f_across_the_top(frac: float, deg: float) -> None:
+    """PIL angles: 180 is 9 o'clock (E), 270 is 12 o'clock, 360 is 3 o'clock (F)."""
+    from bigair.display_render import needle_angle
+
+    assert needle_angle(frac) == pytest.approx(deg)
+
+
+def test_gauge_needle_moves_with_the_tank() -> None:
+    half = render_gauge(_fresh(23.5), NOW, tz="UTC").crop((600, 0, WIDTH, 250))
+    full = render_gauge(_fresh(47.0), NOW, tz="UTC").crop((600, 0, WIDTH, 250))
+    assert half.tobytes() != full.tobytes()

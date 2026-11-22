@@ -80,6 +80,12 @@ use the name. Never publish 8091 on `0.0.0.0`.
 3. Deploy (`git pull && ./deploy/bootstrap.sh`, which rebuilds the display
    image). The device picks it up on its next poll. **No reflash.**
 
+Legibility: nothing smaller than 33 px. The panel sits on the dash and is read
+at a glance (Dan asked for 1.5× the original 22–32 px labels). The tank level is
+an analog arc (E at 9 o'clock, F at 3 o'clock, `needle_angle()`) with no needle
+when the level is unknown. The footer's screen name is drawn only when it fits
+beside the status.
+
 Rules: a stale or missing reading shows dashes or a strike-through plus
 `STALE since hh:mm` / `NO FUEL DATA`, never a confident old number. Low fuel
 is drawn inverted, because the B/W panel has no colour.
