@@ -37,6 +37,7 @@ def test_units_classes_and_names() -> None:
     assert by_id["trip_mi"]["unit_of_measurement"] == "mi"
     assert by_id["trip_mi"]["device_class"] == "distance"
     assert by_id["trip_gal"]["unit_of_measurement"] == "gal"
+    assert by_id["trip_gal"]["state_class"] == "total_increasing"  # HA: not measurement
     assert by_id["trip_mpg"]["unit_of_measurement"] == "mpg"
     assert by_id["van_battery_v"]["unit_of_measurement"] == "V"
     assert by_id["van_battery_v"]["device_class"] == "voltage"

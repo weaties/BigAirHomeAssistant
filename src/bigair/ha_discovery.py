@@ -60,6 +60,7 @@ class _Sensor:
     icon: str | None = None
     stale_gated: bool = False
     state_topic: str = FUEL_STATE_TOPIC
+    state_class: str = "measurement"
 
 
 SENSORS = (
@@ -75,7 +76,16 @@ SENSORS = (
 # freshness check. Position stays out of HA on purpose.
 VAN_SENSORS = (
     _Sensor("trip_mi", "Trip distance", "mi", 1, "distance", state_topic=VAN_STATE_TOPIC),
-    _Sensor("trip_gal", "Trip fuel", "gal", 2, "volume", state_topic=VAN_STATE_TOPIC),
+    # HA rejects "measurement" for volume; the trip counter only grows, then resets.
+    _Sensor(
+        "trip_gal",
+        "Trip fuel",
+        "gal",
+        2,
+        "volume",
+        state_topic=VAN_STATE_TOPIC,
+        state_class="total_increasing",
+    ),
     _Sensor(
         "trip_mpg",
         "Trip economy",
@@ -121,7 +131,7 @@ def _sensor_config(s: _Sensor) -> dict[str, object]:
     }
     if s.device_class != "timestamp":
         config["unit_of_measurement"] = s.unit
-        config["state_class"] = "measurement"
+        config["state_class"] = s.state_class
         config["suggested_display_precision"] = s.precision
     if s.device_class:
         config["device_class"] = s.device_class
