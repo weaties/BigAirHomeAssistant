@@ -18,6 +18,14 @@ history:         # entity history in the UI
 logbook:         # Activity panel
 mobile_app:      # iPhone Companion app: notifications, fill-up prompts, CarPlay
 system_health:   # Settings → System → Repairs/health
+lovelace:        # the phone dash (#64), provisioned from git like Grafana
+  dashboards:
+    bigair-van:
+      mode: yaml
+      filename: dashboards/van.yaml
+      title: Van
+      icon: mdi:van-utility
+      show_in_sidebar: true
 # Not loaded on purpose, re-add when needed:
 #   bluetooth       M3 Victron instant readout (frees the radio for the XGPS160 trial)
 #   assist_pipeline CarPlay Assist "what's my range?" (UNVERIFIED offline)

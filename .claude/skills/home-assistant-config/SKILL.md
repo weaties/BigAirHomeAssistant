@@ -17,8 +17,25 @@ homeassistant/
   packages/
     mqtt_backbone.yaml      # M3, not present yet: mqtt_statestream for Victron BLE
     fill_up.yaml            # helpers, form script, notification automations (M1)
+  dashboards/van.yaml       # the phone dash (#64), registered under lovelace: in configuration.yaml
   secrets.yaml.example      # committed; the real secrets.yaml is gitignored
 ```
+
+## The phone dash (`dashboards/van.yaml`)
+
+- YAML mode, registered as `bigair-van` (url paths need a hyphen). Edits go live on
+  a browser refresh; changes to the `lovelace:` block need an HA restart.
+- Sections views (Drive, Fill-up, History), built-in cards only. Card features
+  used (`trend-graph`, `numeric-input`, `select-options`, heading badges) were
+  checked against HA 2026.11's frontend bundle.
+- **Entity ids come from names, not `object_id`.** HA builds them as
+  `<domain>.bigair_van_<entity name>` (verified in the Pi's entity registry).
+  `tests/test_ha_dashboard.py` derives the same ids from `ha_discovery.py` and fails
+  if the dashboard references one that doesn't exist.
+- Alerts are markdown cards with `<ha-alert>` and a `visibility` condition on the
+  stale, fill-pending and calibrating binary sensors. No logic in templates.
+- On the phone: Companion app → Settings → set the default dashboard to Van, and
+  keep the screen on (Auto-Lock, or the app's kiosk mode) while mounted.
 
 One package per feature. A package owns its helpers, scripts and
 automations. `yamllint` runs in CI; a real HA config check runs on the dev
@@ -43,6 +60,8 @@ Built in `src/bigair/ha_discovery.py`:
 - **Entities:** sensors `tank_gal`, `range_mi`, `mpg_rolling`,
   `mpg_instant_30s` and `mpg_since_full`, plus the binary sensor
   `fuel_stale` (device class `problem`), all on one "BigAir van" device.
+  The phone dash adds trip distance/fuel/economy/start, battery, ignition,
+  engine-last-seen and GPS-last-fix on the retained `bigair/van/state` topic (#64).
 - **Staleness:** tank and range carry a second availability entry on the
   state topic, so they show **unavailable while stale**, not a confident old
   number.

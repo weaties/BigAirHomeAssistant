@@ -11,6 +11,7 @@ from bigair.ha_discovery import (
     MANUAL_FILL_TOPIC,
     OFFLINE,
     ONLINE,
+    VAN_STATE_TOPIC,
     discovery_messages,
     fuel_state_payload,
 )
@@ -80,6 +81,8 @@ def test_state_topics_and_templates_point_at_the_payload_keys() -> None:
     for c in _configs().values():
         if "command_topic" in c or c["object_id"] == "last_fill_up":
             continue  # the button has no state; last fill-up has its own topic
+        if c["state_topic"] == VAN_STATE_TOPIC:
+            continue  # trip and freshness entities: tests/test_ha_van_state.py
         assert c["state_topic"] == FUEL_STATE_TOPIC
         key = {
             "fuel_stale": "stale",

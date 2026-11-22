@@ -160,6 +160,7 @@ def _run(args: argparse.Namespace) -> int:
                     state_payload=lambda: svc.state_payload(datetime.now(UTC)),
                     on_command=lambda t, p: svc.handle_command(t, p, datetime.now(UTC)),
                     drain_outbox=svc.drain_outbox,
+                    extra_states=lambda: [svc.van_state(datetime.now(UTC))],
                 )
             ),
         ]
