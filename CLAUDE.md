@@ -453,3 +453,11 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     hostname, so the bare tailnet IP returns 404. Tailnet membership is the access
     control. The van LAN never sees it, and the device keeps its Bearer key.
     Like Decision #30, nothing depends on it.
+38. **2026-11-22 — Grafana allows anonymous Viewer access** (Dan's request, #65).
+    The phone opens the `bigair-phone` dashboard in Safari (Add to Home Screen,
+    `?kiosk`) with no login. Viewer can't edit or add dashboards. Grafana is
+    reachable only on the van LAN and the tailnet, but anyone on the van Wi-Fi can
+    see the dashboards, including the GPS track map. `GRAFANA_ANONYMOUS=false` in
+    `deploy/.env` turns it off. The `fuel` measurement gained `stale` and
+    `calibrating` booleans so the live tank panel shows "No fresh data" rather than
+    an old number.
