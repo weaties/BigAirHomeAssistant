@@ -471,3 +471,13 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     position). **HA ignores discovery `object_id`**: entity ids come from the device
     and entity names (`sensor.bigair_van_fuel_tank`), so renaming a discovered
     entity breaks the dashboard; `tests/test_ha_dashboard.py` catches it.
+40. **2026-11-22 — Van LED strip via HA's TP-Link integration** (Dan's request,
+    #68). The strip is a Tapo L930 on the `bigair` Wi-Fi. HA's built-in
+    `tplink` integration controls it over the LAN, so it keeps working offline.
+    It's config-entry only, so it's added in the UI like MQTT, and
+    `configuration.yaml` carries a note instead of a key (amends #27's "name the
+    feature" rule for UI-only integrations). The TP-Link account login is asked
+    once for the strip's local authentication and lives in HA's `.storage`,
+    never in git. HA has no `dhcp` discovery, so the strip has a DHCP
+    reservation on the GL.iNet router. Lighting is HA-only: no bigair or Influx
+    involvement.
