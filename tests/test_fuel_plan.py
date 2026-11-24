@@ -242,3 +242,16 @@ def test_trip_without_home_price_values_leftover_at_last_station() -> None:
         }
     )
     assert home == 3.0
+
+
+def test_trip_round_trips_through_dict() -> None:
+    from bigair.fuel_plan import trip_from_dict, trip_to_dict
+
+    s = Station("Love's, CA", 640.0, 6.49, 0.4, 0.8, True, "Open Roads −$0.30; 3 h old")
+    assert trip_from_dict(trip_to_dict(780.0, (s,), 6.89)) == (780.0, (s,), 6.89)
+
+
+def test_notes_are_printed() -> None:
+    s = Station("A", 50.0, 4.0, note="Open Roads −$0.30")
+    inp = _inp(stations=(s, B))
+    assert "(Open Roads −$0.30)" in format_options(inp, plan_options(inp, (0.0,)))
