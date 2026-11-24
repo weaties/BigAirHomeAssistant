@@ -93,8 +93,8 @@ or in `data/`.
 - `price_per_gal` is the expected price on arrival.
 - `detour_mi` and `detour_min` are the round-trip cost of leaving the route.
 - `home_price_per_gal` values the fuel left at the end. Without it the planner
-  would aim to arrive nearly empty. It defaults to the price at the last
-  station.
+  would aim to arrive nearly empty. It defaults to the median price within
+  30 mi of the destination (or of the last five stations).
 
 ## How it decides
 
