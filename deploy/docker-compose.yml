@@ -14,7 +14,7 @@ services:
       - ./volumes/mosquitto/log:/mosquitto/log
 
   homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:2026.11.1
+    image: ghcr.io/home-assistant/home-assistant:2026.11.3
     restart: unless-stopped
     network_mode: host  # mDNS, Bluetooth (Victron BLE), Companion app discovery
     privileged: true  # Bluetooth adapter access
