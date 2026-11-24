@@ -122,7 +122,20 @@ def vehicle_point(sample: ObdSample) -> Point:
             "speed_mph": sample.speed_mph,
             "odometer_mi": sample.odometer_mi,
             "battery_v": sample.battery_v,
+            "ambient_temp_c": sample.ambient_temp_c,
         },
+    )
+
+
+def engine_point(sample: ObdSample) -> Point | None:
+    """Engine temperatures (#79), or None on rounds that didn't poll them."""
+    if sample.coolant_temp_c is None and sample.oil_temp_c is None:
+        return None
+    return Point(
+        "engine",
+        sample.ts,
+        tags={"source": "wican"},
+        fields={"coolant_temp_c": sample.coolant_temp_c, "oil_temp_c": sample.oil_temp_c},
     )
 
 

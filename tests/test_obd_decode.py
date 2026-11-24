@@ -9,6 +9,7 @@ import pytest
 from bigair.obd_decode import (
     LITRES_PER_GAL,
     POLLED_PIDS,
+    SLOW_PIDS,
     decode_fuel_level_pct,
     decode_fuel_rate_lph,
     decode_speed_kmh,
@@ -90,3 +91,21 @@ def test_ecu_silent_means_ignition_off() -> None:
 def test_only_register_signals_are_polled() -> None:
     """0D VERIFIED; 5E and 2F RESPONDS, used under Decisions #31/#32. Nothing else."""
     assert set(POLLED_PIDS) == {"0D", "5E", "2F"}
+    # Temperatures (#79): RESPONDS in the 2026-11-20 scan, history only.
+    assert set(SLOW_PIDS) == {"05", "5C", "46"}
+
+
+def test_temperatures_are_a_minus_40() -> None:
+    """Values from the 2026-11-20 scan: coolant 5E → 54 °C, oil 5A → 50 °C, ambient 2E → 6 °C."""
+    s = sample_from_responses(TS, {"0D": "410D00", "05": "41055E", "5C": "415C5A", "46": "41462E"})
+    assert (s.coolant_temp_c, s.oil_temp_c, s.ambient_temp_c) == (54.0, 50.0, 6.0)
+
+
+def test_temperatures_absent_from_fast_rounds_stay_none() -> None:
+    s = sample_from_responses(TS, {"0D": "410D00", "5C": "NO DATA"})
+    assert (s.coolant_temp_c, s.oil_temp_c, s.ambient_temp_c) == (None, None, None)
+
+
+def test_a_temperature_alone_means_the_ecu_is_awake() -> None:
+    s = sample_from_responses(TS, {"0D": "NO DATA", "05": "41055E"})
+    assert s.ignition

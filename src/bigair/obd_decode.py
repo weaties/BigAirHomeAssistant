@@ -11,6 +11,9 @@ Only signals in docs/pid-register.md are decoded:
 - `ATRV`: the WiCAN's own battery-voltage reading (an adapter command, not a
   vehicle PID). RESPONDS: 14.1–14.2 V with the engine running; not yet checked
   against a multimeter. Used for power debugging and history only.
+- `05` coolant, `5C` oil and `46` ambient temperature: RESPONDS (2026-11-20
+  scan: 54, 50 and 6 °C, all plausible). History only (#79); polled every few
+  rounds (`SLOW_PIDS`) because temperatures change slowly.
 
 Pure functions: raw response text in, unit-suffixed values out.
 """
@@ -27,6 +30,7 @@ if TYPE_CHECKING:
 LITRES_PER_GAL = 3.785411784
 MPH_PER_KMH = 0.621371
 POLLED_PIDS: tuple[str, ...] = ("0D", "5E", "2F")
+SLOW_PIDS: tuple[str, ...] = ("05", "5C", "46")
 
 
 def payload(raw: str, pid: str) -> bytes | None:
@@ -96,6 +100,12 @@ def decode_fuel_level_pct(data: bytes) -> float:
     return data[0] * 100 / 255
 
 
+def decode_temp_c(data: bytes) -> float:
+    """`05`, `5C`, `46`: A − 40 °C (SAE J1979)."""
+    _need(data, 1, "temp")
+    return float(data[0] - 40)
+
+
 def _value(raw: str | None, pid: str) -> float | None:
     data = payload(raw or "", pid)
     if data is None:
@@ -107,6 +117,8 @@ def _value(raw: str | None, pid: str) -> float | None:
             return decode_fuel_rate_lph(data) / LITRES_PER_GAL
         if pid == "2F":
             return decode_fuel_level_pct(data)
+        if pid in SLOW_PIDS:
+            return decode_temp_c(data)
     except ValueError:
         return None
     raise KeyError(pid)
@@ -121,8 +133,9 @@ def sample_from_responses(ts: datetime, responses: dict[str, str]) -> ObdSample:
     speed = _value(responses.get("0D"), "0D")
     rate_gph = _value(responses.get("5E"), "5E")
     level = _value(responses.get("2F"), "2F")
+    coolant, oil, ambient = (_value(responses.get(p), p) for p in SLOW_PIDS)
     # The adapter answers ATRV even with the ECU asleep, so it never implies ignition.
-    ignition = any(v is not None for v in (speed, rate_gph, level))
+    ignition = any(v is not None for v in (speed, rate_gph, level, coolant, oil, ambient))
     return ObdSample(
         ts=ts,
         ignition=ignition,
@@ -130,4 +143,7 @@ def sample_from_responses(ts: datetime, responses: dict[str, str]) -> ObdSample:
         fuel_rate_gph=rate_gph,
         fuel_level_pct=level,
         battery_v=decode_adapter_volts(responses.get("ATRV", "")),
+        coolant_temp_c=coolant,
+        oil_temp_c=oil,
+        ambient_temp_c=ambient,
     )

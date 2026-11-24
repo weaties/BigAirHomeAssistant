@@ -63,7 +63,7 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Coolant temperature",
+      "title": "Engine temperatures",
       "datasource": {
         "type": "influxdb",
         "uid": "influx-van-raw"
@@ -81,7 +81,53 @@
             "spanNulls": false
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Coolant"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3e8ed0"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Oil"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e0a526"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Outside"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8b8d98"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -89,7 +135,7 @@
           "placement": "bottom"
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "multi"
         }
       },
       "targets": [
@@ -101,9 +147,33 @@
           },
           "rawQuery": true,
           "resultFormat": "time_series",
-          "query": "SELECT mean(\"coolant_temp_c\") FROM \"engine\" WHERE $timeFilter GROUP BY time($__interval) fill(null)"
+          "query": "SELECT mean(\"coolant_temp_c\") FROM \"engine\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "Coolant"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"oil_temp_c\") FROM \"engine\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "Oil"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"ambient_temp_c\") FROM \"vehicle\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "Outside"
         }
-      ]
+      ],
+      "description": "Coolant (05), oil (5C) and outside air (46), polled every ~10 s while the engine runs (#79)."
     },
     {
       "id": 3,

@@ -29,7 +29,13 @@ from bigair.ha_discovery import (
     fuel_state_payload,
     van_state_payload,
 )
-from bigair.influx_io import fill_up_point, fuel_point, track_point, vehicle_point
+from bigair.influx_io import (
+    engine_point,
+    fill_up_point,
+    fuel_point,
+    track_point,
+    vehicle_point,
+)
 from bigair.signals import FillSource, FillStatus, FillType, FillUp, FuelState
 from bigair.state_file import StateFileError, StateSaver, read_state
 from bigair.trip import TripMpg
@@ -364,4 +370,6 @@ class FuelService:
             )
         if s is not None and (s.ignition or s.battery_v is not None):
             points.append(vehicle_point(s))
+        if s is not None and (engine := engine_point(s)) is not None:
+            points.append(engine)
         return points
