@@ -50,7 +50,17 @@ class FakeElm:
 
 @pytest.fixture
 async def fake() -> AsyncIterator[FakeElm]:
-    elm = FakeElm({"010D": "410D40", "015E": "415E004B", "012F": "412F3F", "ATZ": "ELM327 v2.3"})
+    elm = FakeElm(
+        {
+            "010D": "410D40",
+            "015E": "415E004B",
+            "012F": "412F3F",
+            "0105": "41055E",
+            "015C": "415C5A",
+            "0146": "41462E",
+            "ATZ": "ELM327 v2.3",
+        }
+    )
     yield elm
     if elm.server:
         elm.server.close()
@@ -103,3 +113,14 @@ async def test_poll_reads_the_adapter_battery_voltage(fake: FakeElm) -> None:
     s = await anext(samples)
     await samples.aclose()
     assert s.battery_v == pytest.approx(14.2)
+
+
+async def test_temperatures_are_polled_every_nth_round(fake: FakeElm) -> None:
+    """Temps change slowly; polling them every round would slow the fuel-rate cadence."""
+    port = await fake.start()
+    samples = poll_samples("127.0.0.1", port, interval_s=0.0, slow_every=3)
+    got = [await anext(samples) for _ in range(4)]
+    await samples.aclose()
+    assert [s.coolant_temp_c for s in got] == [54.0, None, None, 54.0]
+    assert got[0].oil_temp_c == 50.0
+    assert got[0].ambient_temp_c == 6.0

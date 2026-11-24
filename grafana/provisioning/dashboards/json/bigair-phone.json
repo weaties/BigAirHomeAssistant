@@ -836,7 +836,7 @@
       }
     },
     {
-      "id": 16,
+      "id": 17,
       "type": "xychart",
       "title": "Grade vs economy",
       "description": "Track points above 30 mph (so speed doesn't dominate): how much a climb costs and a descent gives back (#78).",
@@ -966,7 +966,7 @@
       }
     },
     {
-      "id": 17,
+      "id": 18,
       "type": "timeseries",
       "title": "Elevation and grade",
       "description": "GPS elevation and road grade over a 400 m window (#78). Grade is blank until the van has covered 400 m, and while parked.",
@@ -1270,6 +1270,135 @@
       "options": {
         "legend": {
           "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Engine temperatures",
+      "description": "Coolant, oil and outside air from the OBD port (only while the engine runs).",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-raw"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 82
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"coolant_temp_c\") FROM \"engine\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "Coolant"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"oil_temp_c\") FROM \"engine\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "Oil"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-raw"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"ambient_temp_c\") FROM \"vehicle\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "alias": "Outside"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "spanNulls": false,
+            "showPoints": "never",
+            "lineInterpolation": "smooth",
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisBorderShow": false,
+            "axisPlacement": "auto"
+          },
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Coolant"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3e8ed0"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Oil"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e0a526"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Outside"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8b8d98"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
           "displayMode": "list",
           "placement": "bottom"
         },

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from bigair.obd_decode import POLLED_PIDS, sample_from_responses
+from bigair.obd_decode import POLLED_PIDS, SLOW_PIDS, sample_from_responses
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -63,11 +63,20 @@ class ElmClient:
 
 
 async def poll_samples(
-    host: str, port: int, interval_s: float = 1.0, retry_s: float = 3.0
+    host: str,
+    port: int,
+    interval_s: float = 1.0,
+    retry_s: float = 3.0,
+    slow_every: int = 10,
 ) -> AsyncIterator[ObdSample]:
-    """Yield one ObdSample per polling round, reconnecting as needed, forever."""
+    """Yield one ObdSample per polling round, reconnecting as needed, forever.
+
+    ``SLOW_PIDS`` (temperatures) are asked every ``slow_every`` rounds, starting
+    with the first, so they don't slow the fuel-rate cadence.
+    """
     client = ElmClient(host, port)
     connected = False
+    round_no = 0
     try:
         while True:
             try:
@@ -76,7 +85,9 @@ async def poll_samples(
                     connected = True
                     logger.info("WiCAN connected at {}:{}", host, port)
                 started = asyncio.get_running_loop().time()
-                responses = {pid: await client.query("01" + pid) for pid in POLLED_PIDS}
+                pids = POLLED_PIDS + (SLOW_PIDS if round_no % slow_every == 0 else ())
+                round_no += 1
+                responses = {pid: await client.query("01" + pid) for pid in pids}
                 responses["ATRV"] = await client.query("ATRV")
                 yield sample_from_responses(datetime.now(UTC), responses)
                 elapsed = asyncio.get_running_loop().time() - started

@@ -149,6 +149,17 @@ def test_influx_points(tmp_path: Path) -> None:
     assert points["fuel"].fields["calibrating"] is True  # 5E not yet VERIFIED (Decision #32)
 
 
+def test_temperatures_become_an_engine_point(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    svc = _svc(tmp_path)
+    svc.handle_sample(replace(_s(1), coolant_temp_c=80.0, oil_temp_c=85.0))
+    points = {p.measurement: p for p in svc.influx_points(T0)}
+    assert points["engine"].fields == {"coolant_temp_c": 80.0, "oil_temp_c": 85.0}
+    svc.handle_sample(_s(2))  # a fast round carries no temperatures
+    assert "engine" not in {p.measurement for p in svc.influx_points(T0)}
+
+
 def test_no_tank_means_no_fuel_point(tmp_path: Path) -> None:
     svc = _svc(tmp_path)
     svc.handle_sample(_s(1))
