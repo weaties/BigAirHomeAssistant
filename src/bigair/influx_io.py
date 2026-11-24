@@ -95,7 +95,12 @@ def to_line(p: Point) -> str:
 # --- mappers: dataclass → Point (field names must be in the Data model table) ---
 
 
-def track_point(fix: GpsFix, mpg_30s: float | None = None, trip_id: str | None = None) -> Point:
+def track_point(
+    fix: GpsFix,
+    mpg_30s: float | None = None,
+    trip_id: str | None = None,
+    grade_pct: float | None = None,
+) -> Point:
     return Point(
         "track",
         fix.ts,
@@ -108,6 +113,7 @@ def track_point(fix: GpsFix, mpg_30s: float | None = None, trip_id: str | None =
             "heading_deg": fix.heading_deg,
             "hdop": fix.hdop,
             "mpg_30s": mpg_30s,
+            "grade_pct": None if grade_pct is None else round(grade_pct, 2),
             "trip_id": trip_id,
         },
     )

@@ -20,7 +20,7 @@ from bigair.fill_detect import FillDetector, FillDetectorConfig
 from bigair.fill_input import FillDecision, FillInput, parse_response
 from bigair.fill_prompt import FillPrompter
 from bigair.fuel_model import FuelModel, FuelModelConfig
-from bigair.gps_logger import TrackRecorder
+from bigair.gps_logger import GradeEstimator, TrackRecorder
 from bigair.ha_discovery import (
     FILL_RESPONSE_TOPIC,
     FILL_RESULT_TOPIC,
@@ -91,6 +91,7 @@ class FuelService:
         self._last_input: tuple[FillInput, datetime] | None = None
         self.prompter = FillPrompter()
         self.track = TrackRecorder()
+        self.grade = GradeEstimator()
         self.last_fix: GpsFix | None = None
 
     @property
@@ -135,10 +136,11 @@ class FuelService:
     def handle_fix(self, fix: GpsFix) -> Point | None:
         """Every GPS fix; returns a track point when one is due (#14)."""
         self.last_fix = fix
+        grade = self.grade.update(fix)  # every fix, so the distance window is accurate
         if not self.track.keep(fix):
             return None
         mpg = self.model.mpg_instant_30s if self.model is not None else None
-        return track_point(fix, mpg_30s=mpg, trip_id=self.trip.trip_id)
+        return track_point(fix, mpg_30s=mpg, trip_id=self.trip.trip_id, grade_pct=grade)
 
     def handle_manual_full(self, now: datetime) -> None:
         """'Filled to full' from HA: seed the tank on a fresh install, else a full fill."""

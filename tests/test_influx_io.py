@@ -153,7 +153,7 @@ def test_mappers_only_write_fields_in_the_data_model() -> None:
     fix = GpsFix(ts=TS, lat=1.0, lon=2.0, speed_mph=1.0, alt_m=1.0, heading_deg=1.0, hdop=1.0)
     sample = ObdSample(ts=TS, ignition=True, speed_mph=1.0, fuel_rate_gph=1.0, odometer_mi=1.0)
     points = [
-        track_point(fix, mpg_30s=1.0, trip_id="t1"),
+        track_point(fix, mpg_30s=1.0, trip_id="t1", grade_pct=1.0),
         vehicle_point(sample),
         fuel_point(
             TS, "fuel_rate", 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, stale=False, calibrating=True

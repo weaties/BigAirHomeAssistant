@@ -459,7 +459,7 @@
         "defaults": {
           "unit": "dateTimeFromNow",
           "decimals": 0,
-          "noValue": "\u2014",
+          "noValue": "—",
           "color": {
             "mode": "fixed",
             "fixedColor": "text"
@@ -836,6 +836,255 @@
       }
     },
     {
+      "id": 16,
+      "type": "xychart",
+      "title": "Grade vs economy",
+      "description": "Track points above 30 mph (so speed doesn't dominate): how much a climb costs and a descent gives back (#78).",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-history"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-history"
+          },
+          "rawQuery": true,
+          "resultFormat": "table",
+          "query": "SELECT mean(\"grade_pct\") AS \"grade_pct\", mean(\"mpg_30s\") AS \"mpg_30s\" FROM \"track\" WHERE $timeFilter AND \"speed_mph\" > 30 AND \"mpg_30s\" > 0 GROUP BY time($__interval) fill(none)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#e0a526"
+          },
+          "custom": {
+            "show": "points",
+            "pointSize": {
+              "fixed": 8
+            },
+            "pointShape": "circle",
+            "fillOpacity": 60,
+            "axisBorderShow": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "grade_pct"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "displayName",
+                "value": "Grade"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "min",
+                "value": -8
+              },
+              {
+                "id": "max",
+                "value": 8
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mpg_30s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "suffix: mpg"
+              },
+              {
+                "id": "displayName",
+                "value": "mpg"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 30
+              }
+            ]
+          }
+        ]
+      },
+      "interval": "10s",
+      "maxDataPoints": 4000,
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ],
+      "options": {
+        "mapping": "auto",
+        "series": [
+          {}
+        ],
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Elevation and grade",
+      "description": "GPS elevation and road grade over a 400 m window (#78). Grade is blank until the van has covered 400 m, and while parked.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx-van-history"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influx-van-history"
+          },
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "query": "SELECT mean(\"alt_m\") * 3.28084 AS \"Elevation\", mean(\"grade_pct\") AS \"Grade\" FROM \"track\" WHERE $timeFilter GROUP BY time($__interval) fill(null)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false,
+            "fillOpacity": 0,
+            "axisBorderShow": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Elevation"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "lengthft"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8b8d98"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 15
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "left"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Grade"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "min",
+                "value": -10
+              },
+              {
+                "id": "max",
+                "value": 10
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e0a526"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
       "id": 12,
       "type": "row",
       "title": "Map",
@@ -844,7 +1093,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 59
       },
       "panels": []
     },
@@ -852,7 +1101,7 @@
       "id": 13,
       "type": "geomap",
       "title": "Track by economy",
-      "description": "Coloured by 30 s mpg (red 8 \u2192 green 25). Basemap tiles need internet; offline the track still draws.",
+      "description": "Coloured by 30 s mpg (red 8 → green 25). Basemap tiles need internet; offline the track still draws.",
       "datasource": {
         "type": "influxdb",
         "uid": "influx-van-history"
@@ -861,7 +1110,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 60
       },
       "interval": "5s",
       "maxDataPoints": 6000,
@@ -874,7 +1123,7 @@
           },
           "rawQuery": true,
           "resultFormat": "table",
-          "query": "SELECT last(\"lat\") AS \"lat\", last(\"lon\") AS \"lon\", mean(\"mpg_30s\") AS \"mpg_30s\" FROM \"track\" WHERE $timeFilter GROUP BY time($__interval) fill(none)"
+          "query": "SELECT last(\"lat\") AS \"lat\", last(\"lon\") AS \"lon\", mean(\"mpg_30s\") AS \"mpg_30s\", mean(\"grade_pct\") AS \"grade_pct\" FROM \"track\" WHERE $timeFilter GROUP BY time($__interval) fill(none)"
         }
       ],
       "fieldConfig": {
@@ -946,7 +1195,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 74
       },
       "panels": []
     },
@@ -963,7 +1212,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 57
+        "y": 75
       },
       "targets": [
         {
