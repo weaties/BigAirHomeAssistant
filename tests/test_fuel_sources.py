@@ -288,23 +288,42 @@ def test_mirror_return_adds_return_leg() -> None:
     ]
 
 
-def test_collect_candidates_pages_each_segment() -> None:
+def test_collect_candidates_runs_each_search_on_each_segment() -> None:
     from bigair.fuel_sources import collect_candidates
 
     r = _straight_route(138.18)
-    calls: list[tuple[float, str | None]] = []
+    calls: list[tuple[str | None, str, str | None]] = []
 
-    def search(seg: object, token: str | None) -> dict[str, object]:
-        calls.append((seg.start_mi, token))  # type: ignore[attr-defined]
-        if token is None:
-            p = _place("p1", "Love's", 40.5, -120.0, [("DIESEL", "6", 0, FRESH)])
+    def search(seg: object, token: str | None, q: str, typ: str | None) -> dict[str, object]:
+        calls.append((token, q, typ))
+        if q == "diesel" and token is None:
+            p = _place("p1", "Corner Gas", 40.5, -120.0, [("DIESEL", "6", 0, FRESH)])
             return {"places": [p], "nextPageToken": "t2"}
+        if q == "truck stop":
+            priced = _place("p2", "Love's Travel Stop", 40.8, -120.0, [("DIESEL", "6", 0, FRESH)])
+            bare = _place("p3", "Petro Travel Center", 41.2, -120.0, [])
+            return {"places": [priced, bare]}
         return {"places": []}
 
-    cands = collect_candidates(r, search, seg_mi=100.0)
+    found = collect_candidates(r, search, seg_mi=100.0)
     assert len(segments(r, 100.0)) == 2
-    assert [t for _, t in calls] == [None, "t2", None, "t2"]
-    assert len(cands) == 2  # same place found by both segments; build_stations dedupes
+    assert calls[:3] == [
+        (None, "diesel", "gas_station"),
+        ("t2", "diesel", "gas_station"),
+        (None, "truck stop", None),
+    ]
+    assert len(calls) == 6
+    assert {c.place_id for c in found.candidates} == {"p1", "p2"}
+    # Unpriced Open Roads stations are reported once, not planned with.
+    assert [u.name for u in found.unpriced] == ["Petro Travel Center"]
+    assert found.unpriced[0].mile == pytest.approx(82.9, abs=0.5)
+
+
+def test_unpriced_ignores_non_member_brands() -> None:
+    from bigair.fuel_sources import decode_unpriced_members
+
+    body = {"places": [_place("p", "Rest Area", 40.5, -120.0, [])]}
+    assert decode_unpriced_members(body, _straight_route()) == []
 
 
 def test_parse_discounts() -> None:
@@ -325,3 +344,23 @@ def test_live_fuel_from_state() -> None:
     )
     f = live_fuel_from_state(payload)
     assert (f.tank_gal, f.mpg, f.calibrating, f.stale) == (43.71, 15.0, True, False)
+
+
+def test_unpriced_skips_repair_shops_and_priced_duplicates() -> None:
+    from bigair.fuel_sources import collect_candidates
+
+    r = _straight_route(138.18)
+
+    def search(seg: object, token: str | None, q: str, typ: str | None) -> dict[str, object]:
+        return {
+            "places": [
+                _place("a", "Love's Travel Stop", 41.0, -120.0, [("DIESEL", "6", 0, FRESH)]),
+                _place("b", "Love's", 41.005, -120.0, []),  # same stop, second listing
+                _place("c", "Love's Truck Care", 41.5, -120.0, []),
+                _place("d", "TA Truck Service", 41.6, -120.0, []),
+                _place("e", "TA Travel Center", 41.7, -120.0, []),
+            ]
+        }
+
+    found = collect_candidates(r, search, seg_mi=200.0, searches=(("diesel", None, 1),))
+    assert [u.name for u in found.unpriced] == ["TA Travel Center"]

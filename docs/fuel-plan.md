@@ -34,7 +34,11 @@ uv run bigair fuel-plan --from "Seattle, WA" --to "Sonoma Raceway, CA" --round-t
   lists each station again for the drive home, at its mirrored mile, plus
   `--local-mi` (default 20) of driving at the far end.
 - **Stations:** Places API (New) Text Search along the route, in 100-mi
-  stretches of up to 60 results each. Only stations that post a `DIESEL` (or
+  stretches. Each stretch gets a "diesel" search (up to 60 results) and a
+  "truck stop" search (20), because truck stops can rank below the many gas
+  stations in a busy stretch. Open Roads stations that Google has no price for
+  (often Petro and TA) are listed above the plan so you can check them in the
+  app. Only stations that post a `DIESEL` (or
   `TRUCK_DIESEL`) price count. Prices older than `--max-age-h` (72) are dropped.
   Google returns the standard (highest) posted price.
 - **Detour:** origin → station → stretch end, minus the stretch length, from

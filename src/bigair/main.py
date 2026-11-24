@@ -202,7 +202,9 @@ def _fuel_trip_live(args: argparse.Namespace) -> tuple[float, tuple[Station, ...
     if not key:
         raise SystemExit("set GOOGLE_MAPS_API_KEY (Routes API + Places API (New) enabled)")
     route = decode_route(google_io.compute_route(key, args.origin, args.to, args.via or []))
-    cands = collect_candidates(route, lambda seg, tok: google_io.search_along(key, seg, tok))
+    found = collect_candidates(
+        route, lambda seg, tok, q, typ: google_io.search_along(key, seg, tok, q, typ)
+    )
     try:
         series = decode_eia(eia_io.fetch_diesel(os.environ.get("EIA_API_KEY", "DEMO_KEY")))
         drifts = {area: drift_per_day(v) for area, v in series.items()}
@@ -212,8 +214,13 @@ def _fuel_trip_live(args: argparse.Namespace) -> tuple[float, tuple[Station, ...
     now = datetime.now(UTC)
     depart = datetime.fromisoformat(args.depart).astimezone(UTC) if args.depart else now
     stations = build_stations(
-        cands, route, now, depart, drifts, parse_discounts(args.discount), args.max_age_h
+        found.candidates, route, now, depart, drifts, parse_discounts(args.discount), args.max_age_h
     )
+    if found.unpriced:
+        names = ", ".join(
+            f"{u.name}{', ' + u.state if u.state else ''} (mi {u.mile:.0f})" for u in found.unpriced
+        )
+        print(f"Open Roads stations Google has no price for (check the app): {names}\n")
     if args.round_trip:
         return 2 * route.total_mi + args.local_mi, mirror_return(
             stations, route.total_mi, args.local_mi

@@ -25,6 +25,7 @@ what each mile of reserve given up saves.
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass, field, replace
 
 _EPS = 1e-9
@@ -364,10 +365,22 @@ def trip_from_dict(data: dict[str, object]) -> tuple[float, tuple[Station, ...],
     return route_mi, stations, float(home)  # type: ignore[arg-type]
 
 
-def default_home_price(stations: tuple[Station, ...], route_mi: float) -> float:
-    """Price at the diesel station nearest the destination (0 if there are none)."""
-    diesel = [s for s in stations if s.diesel and s.mile <= route_mi]
-    return max(diesel, key=lambda s: s.mile).price_per_gal if diesel else 0.0
+def default_home_price(
+    stations: tuple[Station, ...], route_mi: float, near_mi: float = 30.0
+) -> float:
+    """Typical diesel price near the destination: the median within ``near_mi``.
+
+    Uses the last five stations when fewer than three are that close, and 0
+    when there are none. A median keeps one expensive station from inflating
+    the value of fuel brought home.
+    """
+    diesel = sorted((s for s in stations if s.diesel and s.mile <= route_mi), key=lambda s: s.mile)
+    if not diesel:
+        return 0.0
+    near = [s.price_per_gal for s in diesel if s.mile >= route_mi - near_mi]
+    if len(near) < 3:
+        near = [s.price_per_gal for s in diesel[-5:]]
+    return statistics.median(near)
 
 
 def trip_to_dict(

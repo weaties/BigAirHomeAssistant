@@ -55,7 +55,14 @@ def test_search_along_request(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = _capture(monkeypatch, google_io, {"places": []})
     seg = Segment("abc", (40.0, -120.0), 0.0, 100.0)
     google_io.search_along("KEY", seg, "tok")
+    google_io.search_along("KEY", seg, None, "truck stop", None)
     body = json.loads(seen[0].data)
+    truck = json.loads(seen[1].data)
+    assert body["textQuery"] == "diesel"
+    assert body["includedType"] == "gas_station"
+    assert truck["textQuery"] == "truck stop"
+    assert "includedType" not in truck
+    assert "pageToken" not in truck
     assert body["searchAlongRouteParameters"] == {"polyline": {"encodedPolyline": "abc"}}
     assert body["routingParameters"]["origin"] == {"latitude": 40.0, "longitude": -120.0}
     assert body["pageToken"] == "tok"

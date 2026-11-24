@@ -66,10 +66,15 @@ def compute_route(key: str, origin: str, destination: str, via: list[str]) -> di
     return _post(ROUTES_URL, key, ROUTE_FIELDS, body)
 
 
-def search_along(key: str, seg: Segment, page_token: str | None) -> dict[str, Any]:
+def search_along(
+    key: str,
+    seg: Segment,
+    page_token: str | None,
+    query: str = "diesel",
+    included_type: str | None = "gas_station",
+) -> dict[str, Any]:
     body: dict[str, Any] = {
-        "textQuery": "diesel",
-        "includedType": "gas_station",
+        "textQuery": query,
         "pageSize": 20,
         "searchAlongRouteParameters": {"polyline": {"encodedPolyline": seg.encoded}},
         "routingParameters": {
@@ -77,6 +82,8 @@ def search_along(key: str, seg: Segment, page_token: str | None) -> dict[str, An
             "travelMode": "DRIVE",
         },
     }
+    if included_type:
+        body["includedType"] = included_type
     if page_token:
         body["pageToken"] = page_token
     return _post(PLACES_URL, key, PLACE_FIELDS, body)

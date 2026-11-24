@@ -54,6 +54,8 @@ BRAND_LABEL = {"loves": "Love's", "ta": "TA", "petro": "Petro"}
 OPEN_ROADS_DEFAULT = {"loves": 0.30, "ta": 0.30, "petro": 0.30}
 """Open Roads (TSD) member discount, $/gal: the low end of the reported 30–50¢.
 The real member price varies by station and is shown in the TSD Open Roads app."""
+_NOT_FUEL = re.compile(r"truck care|truck service|tire|truck wash|speedco", re.IGNORECASE)
+"""Member-brand listings that are repair shops or washes, not fuel desks."""
 _WEST_COAST_EX_CA = {"WA", "OR", "NV", "AZ", "AK", "HI"}
 
 
@@ -359,23 +361,79 @@ def mirror_return(
     return down + up
 
 
+@dataclass(frozen=True)
+class Unpriced:
+    """An Open Roads station on the route that Google has no diesel price for."""
+
+    name: str
+    state: str
+    mile: float
+
+
+def decode_unpriced_members(body: dict[str, Any], route: RouteInfo) -> list[Unpriced]:
+    out: list[Unpriced] = []
+    for p in body.get("places") or []:
+        name = str((p.get("displayName") or {}).get("text", ""))
+        loc = p.get("location") or {}
+        if not brand_of(name) or _NOT_FUEL.search(name) or "latitude" not in loc:
+            continue
+        kinds = {
+            fp.get("type")
+            for fp in (p.get("fuelOptions") or {}).get("fuelPrices", [])
+            if "price" in fp
+        }
+        if kinds & set(_DIESEL_KINDS):
+            continue
+        m = _STATE_RE.search(p.get("formattedAddress", ""))
+        mile, _ = route.project(loc["latitude"], loc["longitude"])
+        out.append(Unpriced(name, m.group(1) if m else "", mile))
+    return out
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    candidates: list[Candidate]
+    unpriced: list[Unpriced]
+
+
+SEARCHES: tuple[tuple[str, str | None, int], ...] = (
+    ("diesel", "gas_station", 3),
+    # Truck stops (where Open Roads applies) can rank below the many
+    # gas stations in a busy stretch, so they get a search of their own.
+    ("truck stop", None, 1),
+)
+"""(text query, included type, max pages). Text Search caps a query at 3 pages of 20."""
+
+
 def collect_candidates(
     route: RouteInfo,
-    search: Callable[[Segment, str | None], dict[str, Any]],
+    search: Callable[[Segment, str | None, str, str | None], dict[str, Any]],
     seg_mi: float = 100.0,
-    max_pages: int = 3,
-) -> list[Candidate]:
-    """Search each stretch of the route (up to 3 pages of 20, the API's limit)."""
-    out: list[Candidate] = []
+    searches: tuple[tuple[str, str | None, int], ...] = SEARCHES,
+) -> SearchResult:
+    """Run each search over each stretch of the route."""
+    cands: list[Candidate] = []
+    unpriced: dict[tuple[str, int], Unpriced] = {}
     for seg in segments(route, seg_mi):
-        token: str | None = None
-        for _ in range(max_pages):
-            body = search(seg, token)
-            out.extend(decode_places(body, route, seg))
-            token = body.get("nextPageToken") or None
-            if not token:
-                break
-    return out
+        for query, included_type, max_pages in searches:
+            token: str | None = None
+            for _ in range(max_pages):
+                body = search(seg, token, query, included_type)
+                cands.extend(decode_places(body, route, seg))
+                for u in decode_unpriced_members(body, route):
+                    unpriced.setdefault((u.name, round(u.mile)), u)
+                token = body.get("nextPageToken") or None
+                if not token:
+                    break
+    # A truck stop often has several listings; drop an unpriced one when the
+    # same brand already has a price within a mile.
+    priced = [(brand_of(c.name), c.mile) for c in cands]
+    left = [
+        u
+        for u in unpriced.values()
+        if not any(b == brand_of(u.name) and abs(m - u.mile) <= 1.0 for b, m in priced)
+    ]
+    return SearchResult(cands, sorted(left, key=lambda u: u.mile))
 
 
 def parse_discounts(spec: str) -> dict[str, float]:
