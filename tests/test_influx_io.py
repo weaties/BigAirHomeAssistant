@@ -187,7 +187,7 @@ def test_mappers_only_write_fields_in_the_data_model() -> None:
     assert engine is not None
     points = [
         engine,
-        track_point(fix, mpg_30s=1.0, trip_id="t1"),
+        track_point(fix, mpg_30s=1.0, trip_id="t1", grade_pct=1.0),
         vehicle_point(sample),
         fuel_point(
             TS, "fuel_rate", 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, stale=False, calibrating=True

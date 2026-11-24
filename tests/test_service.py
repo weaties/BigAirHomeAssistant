@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bigair.service import FuelService, ServiceConfig
-from bigair.signals import ObdSample
+from bigair.signals import GpsFix, ObdSample
 from bigair.state_file import read_state
 
 if TYPE_CHECKING:
@@ -179,3 +179,25 @@ def test_unknown_commands_are_ignored(tmp_path: Path, topic: str, payload: bytes
     svc = _svc(tmp_path)
     assert not svc.handle_command(topic, payload, T0)
     assert svc.model is None
+
+
+def test_track_points_carry_the_road_grade(tmp_path: Path) -> None:
+    """Grade is fed every fix (10 Hz from gpsd) but written on the 5 s track points (#78)."""
+    import math
+
+    svc = _svc(tmp_path)
+    m_per_deg = 6_371_000 * math.pi / 180
+    points = []
+    for i in range(300):  # 30 s at 10 Hz, 26.8 m/s, climbing 6 %
+        d = i * 2.68
+        fix = GpsFix(
+            ts=T0 + timedelta(seconds=i / 10),
+            lat=45.0 + d / m_per_deg,
+            lon=-120.0,
+            speed_mph=60.0,
+            alt_m=100.0 + 0.06 * d,
+        )
+        if (p := svc.handle_fix(fix)) is not None:
+            points.append(p)
+    assert points[0].fields.get("grade_pct") is None  # window not covered yet
+    assert points[-1].fields["grade_pct"] == pytest.approx(6.0, abs=0.05)
