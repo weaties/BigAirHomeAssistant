@@ -56,7 +56,7 @@ def test_fuel_plan_live_wiring(
     """--from/--to/--live wiring with every edge faked (no network)."""
     import json
 
-    from bigair import eia_io, google_io, mqtt_io
+    from bigair import eia_io, google_io, mqtt_io, weather_io
     from bigair.fuel_sources import encode_polyline
 
     poly = encode_polyline([(40.0 + i * 0.1, -120.0) for i in range(21)])
@@ -88,6 +88,8 @@ def test_fuel_plan_live_wiring(
     monkeypatch.setattr(google_io, "compute_route", lambda *a: route)
     monkeypatch.setattr(google_io, "search_along", lambda *a: {"places": [place]})
     monkeypatch.setattr(eia_io, "fetch_diesel", lambda *a: {"response": {"data": []}})
+    monkeypatch.setattr(weather_io, "fetch_forecasts", lambda pts: [{"hourly": {}} for _ in pts])
+    monkeypatch.setattr(weather_io, "fetch_alerts", lambda *a: {"features": []})
 
     async def fake_read(*a: object) -> bytes:
         return json.dumps(
@@ -142,3 +144,46 @@ def test_fuel_plan_refuses_stale_live_state(
     trip.write_text(json.dumps({"route_mi": 100, "stations": []}))
     assert main(["fuel-plan", str(trip), "--live"]) == 2
     assert "refused" in capsys.readouterr().out
+
+
+def test_planner_without_key_still_serves(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No Google key: the page and cache still work, planning explains what's missing."""
+    import json
+    import threading
+    import urllib.error
+    import urllib.request
+
+    from bigair import planner_server
+
+    monkeypatch.delenv("GOOGLE_MAPS_API_KEY", raising=False)
+    servers: list[object] = []
+    real = planner_server.make_server
+
+    def capture(*a: object, **kw: object) -> object:
+        srv = real(*a, **kw)  # type: ignore[arg-type]
+        servers.append(srv)
+        srv.serve_forever = lambda: None  # type: ignore[method-assign]
+        return srv
+
+    monkeypatch.setattr(planner_server, "make_server", capture)
+    assert (
+        main(["planner", "--host", "127.0.0.1", "--port", "0", "--cache", str(tmp_path / "p.json")])
+        == 0
+    )
+    srv = servers[0]
+    t = threading.Thread(target=type(srv).serve_forever, args=(srv,), daemon=True)  # type: ignore[arg-type]
+    t.start()
+    port = srv.server_address[1]  # type: ignore[attr-defined]
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/plan",
+        data=json.dumps({"origin": "A", "destination": "B"}).encode(),
+    )
+    try:
+        urllib.request.urlopen(req, timeout=5)
+        raise AssertionError("expected 400")
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+        assert "GOOGLE_MAPS_API_KEY" in json.loads(e.read())["error"]
+    finally:
+        srv.shutdown()  # type: ignore[attr-defined]
+        srv.server_close()  # type: ignore[attr-defined]

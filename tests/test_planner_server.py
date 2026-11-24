@@ -1,0 +1,117 @@
+"""Trip planner HTTP edge (#75): page, cached plan, limits, errors."""
+
+from __future__ import annotations
+
+import json
+import threading
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+import pytest
+
+from bigair.planner_server import make_server
+from bigair.trip_service import TripError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from pathlib import Path
+
+NOW = datetime(2026, 11, 24, 18, 0, tzinfo=UTC)
+
+
+def _serve(
+    tmp_path: Path, run: Callable[[dict[str, Any]], dict[str, Any]], limit: int = 20
+) -> Iterator[str]:
+    server = make_server("127.0.0.1", 0, run, tmp_path / "plan.json", limit, lambda: NOW)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+def _req(url: str, body: object | None = None) -> tuple[int, Any]:
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = r.read()
+            ctype = r.headers.get("Content-Type", "")
+            return r.status, json.loads(raw) if "json" in ctype else raw
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+@pytest.fixture
+def ok_url(tmp_path: Path) -> Iterator[str]:
+    yield from _serve(tmp_path, lambda p: {"plan": p["destination"], "generated_at": "x"})
+
+
+def test_page_is_served(ok_url: str) -> None:
+    status, body = _req(f"{ok_url}/")
+    assert status == 200
+    assert b"<title>Trip Planner</title>" in body
+    assert b"leaflet/1.9.4" in body
+
+
+def test_plan_then_last(ok_url: str) -> None:
+    assert _req(f"{ok_url}/api/plan/last")[0] == 404
+    status, body = _req(f"{ok_url}/api/plan", {"origin": "A", "destination": "B"})
+    assert (status, body["plan"]) == (200, "B")
+    status, last = _req(f"{ok_url}/api/plan/last")
+    assert (status, last["plan"]) == (200, "B")
+
+
+def test_bad_body(ok_url: str) -> None:
+    req = urllib.request.Request(f"{ok_url}/api/plan", data=b"[1,2]", method="POST")
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        urllib.request.urlopen(req, timeout=10)
+    assert ei.value.code == 400
+
+
+def test_trip_error_is_400_and_other_errors_502(tmp_path: Path) -> None:
+    def run(p: dict[str, Any]) -> dict[str, Any]:
+        if p.get("kind") == "trip":
+            raise TripError("no GPS fix")
+        raise RuntimeError("Google said no")
+
+    gen = _serve(tmp_path, run)
+    url = next(gen)
+    assert _req(f"{url}/api/plan", {"kind": "trip"}) == (400, {"error": "no GPS fix"})
+    status, body = _req(f"{url}/api/plan", {"kind": "other"})
+    assert status == 502
+    assert "Google said no" in body["error"]
+    assert not (tmp_path / "plan.json").exists()  # failures aren't cached
+    next(gen, None)
+
+
+def test_daily_limit(tmp_path: Path) -> None:
+    gen = _serve(tmp_path, lambda p: {"ok": True}, limit=2)
+    url = next(gen)
+    codes = [_req(f"{url}/api/plan", {"n": i})[0] for i in range(3)]
+    assert codes == [200, 200, 429]
+    next(gen, None)
+
+
+def test_one_plan_at_a_time(tmp_path: Path) -> None:
+    gate = threading.Event()
+    started = threading.Event()
+
+    def slow(p: dict[str, Any]) -> dict[str, Any]:
+        started.set()
+        gate.wait(5)
+        return {"ok": True}
+
+    gen = _serve(tmp_path, slow)
+    url = next(gen)
+    first: list[int] = []
+    t = threading.Thread(target=lambda: first.append(_req(f"{url}/api/plan", {})[0]))
+    t.start()
+    started.wait(5)
+    assert _req(f"{url}/api/plan", {})[0] == 409
+    gate.set()
+    t.join(5)
+    assert first == [200]
+    next(gen, None)

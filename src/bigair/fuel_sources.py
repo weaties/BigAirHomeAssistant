@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -216,6 +216,8 @@ class Candidate:
     price_kind: str
     updated: datetime
     city: str = ""
+    lat: float | None = None
+    lon: float | None = None
 
 
 def _parse_time(s: str) -> datetime:
@@ -248,6 +250,8 @@ def decode_places(body: dict[str, Any], route: RouteInfo, seg: Segment) -> list[
                 name=str((p.get("displayName") or {}).get("text", "?")),
                 state=m.group(2) if m else "",
                 city=(m.group(1) or "").strip() if m else "",
+                lat=float(loc["latitude"]),
+                lon=float(loc["longitude"]),
                 mile=mile,
                 detour_mi=detour,
                 price_per_gal=money(fp["price"]),
@@ -336,6 +340,8 @@ def build_stations(
                 detour_mi=round(c.detour_mi, 1),
                 detour_min=round(c.detour_mi / DETOUR_MPH * 60, 1),
                 note="; ".join(notes),
+                lat=c.lat,
+                lon=c.lon,
             )
         )
     return tuple(out)
@@ -345,21 +351,9 @@ def mirror_return(
     stations: tuple[Station, ...], out_mi: float, local_mi: float
 ) -> tuple[Station, ...]:
     """Out-and-back on the same road: list each station again for the return leg."""
-    down = tuple(
-        Station(f"{s.name} ↓", s.mile, s.price_per_gal, s.detour_mi, s.detour_min, s.diesel, s.note)
-        for s in stations
-    )
+    down = tuple(replace(s, name=f"{s.name} ↓") for s in stations)
     up = tuple(
-        Station(
-            f"{s.name} ↑",
-            out_mi + local_mi + (out_mi - s.mile),
-            s.price_per_gal,
-            s.detour_mi,
-            s.detour_min,
-            s.diesel,
-            s.note,
-        )
-        for s in stations
+        replace(s, name=f"{s.name} ↑", mile=out_mi + local_mi + (out_mi - s.mile)) for s in stations
     )
     return down + up
 

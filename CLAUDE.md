@@ -85,7 +85,8 @@ Principles:
 - **bigair is the single InfluxDB writer.** HA's InfluxDB integration is not
   used — its entity-shaped schema would fight ours. One writer, one schema.
 - **Hardware isolation.** Only edge modules (`mqtt_io.py`, `influx_io.py`,
-  `gps_logger.py`'s gpsd client, `google_io.py`, `eia_io.py`) touch the network or devices, and only
+  `gps_logger.py`'s gpsd client, `google_io.py`, `eia_io.py`, `weather_io.py`,
+  `planner_server.py`) touch the network or devices, and only
   `main.py` imports them. Logic modules (`fuel_model.py`, `fill_detect.py`,
   `heater.py`) take and return frozen dataclasses from `signals.py`, so they
   test without hardware.
@@ -132,6 +133,10 @@ src/bigair/          # all Python; one small module per concern
   fuel_plan.py       #   fuel-stop planner: where/how much to fill on a route
   fuel_sources.py    #   route/station/price-trend decoders for the planner
   google_io.py / eia_io.py   # edges: Google Routes + Places, EIA prices (#71)
+  route_weather.py   #   weather along the route: sampling, conditions at ETA (#75)
+  trip_service.py    #   whole trip plan (fuel + weather) for CLI and planner page
+  planner_server.py  #   edge: trip planner page + API, port 8092 (#75)
+  weather_io.py      #   edge: Open-Meteo forecasts, NWS alerts
   gps_logger.py      #   gpsd TPV → GpsFix, track-point cadence
   gpsd_io.py         #   edge: gpsd JSON client
   mqtt_io.py / influx_io.py   # edges (M1)
@@ -154,6 +159,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy src/
 uv run yamllint homeassistant grafana deploy .github   # config lint
 uv run bigair display --port 8090               # dash gauge server (preview: /api/display.png)
 uv run bigair fuel-plan trip.json --tank-gal 40 --mpg 15   # fuel stops per reserve depth (docs/fuel-plan.md)
+uv run bigair planner --port 8092                # trip planner page: fuel stops + weather on a map
 docker compose -f deploy/docker-compose.yml config   # validate the stack
 uvx --from shellcheck-py shellcheck -x deploy/*.sh   # lint shell scripts
 
@@ -491,3 +497,16 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     the reported 30–50¢). It's a planning estimate, not the pump price. The
     planner is a CLI on the Mac for now; it reads the tank over Tailscale MQTT.
     The van runs it in #72.
+42. **2026-11-24 — The trip planner runs on the Pi as one web page, embedded in HA**
+    (Dan's request, #75). `bigair planner` (port 8092, host networking) serves the
+    page and its API. The Companion app shows the same page in a Van-dashboard
+    "Trip" view, so there's one interface rather than an HA-native copy. Weather
+    along the route comes from Open-Meteo (free, no key, 16 days hourly, about every
+    25 mi) and NWS alerts (generic User-Agent, no contact details). The browser
+    re-times the weather for any departure without a new request; classification
+    thresholds come from `route_weather.CLASSIFY`. The page has no login because
+    it's reachable only on the van LAN and the tailnet. Paid plans are limited to
+    one at a time and `PLANNER_DAILY_LIMIT` a day, with the Google spend cap as the
+    backstop. Missing weather or alerts only add a warning; a missing route or fuel
+    state, or stale fuel data, means no plan. Tests block outbound connections
+    (`tests/conftest.py`).

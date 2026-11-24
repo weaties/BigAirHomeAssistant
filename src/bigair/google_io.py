@@ -13,6 +13,7 @@ problem (API not enabled, bad field mask, quota).
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -54,15 +55,27 @@ def _post(url: str, key: str, fields: str, body: dict[str, Any]) -> dict[str, An
         raise GoogleApiError(f"{url.split('/')[2]} HTTP {e.code}: {detail}") from e
 
 
+_LATLON = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$")
+
+
+def waypoint(place: str) -> dict[str, Any]:
+    """An address, or ``"lat,lon"`` (e.g. the van's GPS position) as a location."""
+    m = _LATLON.match(place)
+    if m:
+        lat, lon = float(m.group(1)), float(m.group(2))
+        return {"location": {"latLng": {"latitude": lat, "longitude": lon}}}
+    return {"address": place}
+
+
 def compute_route(key: str, origin: str, destination: str, via: list[str]) -> dict[str, Any]:
     body: dict[str, Any] = {
-        "origin": {"address": origin},
-        "destination": {"address": destination},
+        "origin": waypoint(origin),
+        "destination": waypoint(destination),
         "travelMode": "DRIVE",
         "routingPreference": "TRAFFIC_UNAWARE",
     }
     if via:
-        body["intermediates"] = [{"address": v} for v in via]
+        body["intermediates"] = [waypoint(v) for v in via]
     return _post(ROUTES_URL, key, ROUTE_FIELDS, body)
 
 

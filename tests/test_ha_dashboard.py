@@ -96,10 +96,18 @@ def test_no_personal_entities() -> None:
         assert not ref.startswith(("person.", "device_tracker.", "notify.")), ref
 
 
+def test_trip_view_embeds_the_planner() -> None:
+    (trip,) = [v for v in _dash()["views"] if v["path"] == "trip"]
+    assert trip["type"] == "panel"
+    (card,) = trip["cards"]
+    assert card["type"] == "iframe"
+    assert card["url"].endswith(":8092/")
+
+
 def test_every_view_is_a_sections_view_with_a_path() -> None:
     views = _dash()["views"]
     assert isinstance(views, list)
-    assert [v["path"] for v in views] == ["drive", "fill", "history"]
-    assert all(v["type"] == "sections" for v in views)
+    assert [v["path"] for v in views] == ["drive", "fill", "history", "trip"]
+    assert all(v["type"] == "sections" for v in views if v["path"] != "trip")
     # The pending-fill alert links to the Fill-up view by its path.
     assert "/bigair-van/fill" in DASH.read_text()

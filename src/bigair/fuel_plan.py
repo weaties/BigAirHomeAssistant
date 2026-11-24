@@ -49,6 +49,8 @@ class Station:
     diesel: bool = True
     note: str = ""
     """Shown beside the stop, e.g. member discount and price age."""
+    lat: float | None = None
+    lon: float | None = None
 
 
 @dataclass(frozen=True)
@@ -355,6 +357,8 @@ def trip_from_dict(data: dict[str, object]) -> tuple[float, tuple[Station, ...],
             detour_min=float(s.get("detour_min", 0.0)),
             diesel=bool(s.get("diesel", True)),
             note=str(s.get("note", "")),
+            lat=float(s["lat"]) if s.get("lat") is not None else None,
+            lon=float(s["lon"]) if s.get("lon") is not None else None,
         )
         for s in raw
     )
@@ -399,6 +403,7 @@ def trip_to_dict(
                 "detour_min": s.detour_min,
                 "diesel": s.diesel,
                 "note": s.note,
+                **({"lat": s.lat, "lon": s.lon} if s.lat is not None else {}),
             }
             for s in stations
         ],

@@ -370,3 +370,16 @@ views:
                 name: Ignition
             grid_options:
               columns: full
+
+  # ---------------------------------------------------------------- Trip
+  # The trip planner page served by bigair on the Pi (#75): fuel stops per
+  # reserve depth and the weather along the route. A webpage card can't use HA's
+  # own address, so it names the Pi by its mDNS name on the van Wi-Fi.
+  - title: Trip
+    path: trip
+    icon: mdi:map-marker-path
+    type: panel
+    cards:
+      - type: iframe
+        url: http://bigair-ha.local:8092/
+        aspect_ratio: 100%
