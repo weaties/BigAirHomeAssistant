@@ -174,3 +174,32 @@ def test_an_implausible_grade_is_dropped() -> None:
     fixes = _climb(0.0, 60)
     fixes[-1] = replace(fixes[-1], alt_m=fixes[-1].alt_m + 120)  # type: ignore[operator]
     assert _run(fixes)[-1] is None
+
+
+def test_a_stop_inside_the_window_gives_no_grade() -> None:
+    """Stop-and-go (#83): GPS altitude drifts while stopped; that drift is not grade.
+
+    200 m on the flat, 3 min stopped while altitude wanders up 12 m, then 200 m
+    more on the flat. Without a time cap that reads as 3 % uphill.
+    """
+    g = GradeEstimator()
+    first = _climb(0.0, 8)  # ~214 m
+    _run(first, g)
+    t_stop = first[-1].ts
+    stopped = [
+        replace(first[-1], ts=t_stop + timedelta(seconds=s), speed_mph=0.0, alt_m=100.0 + s / 15)
+        for s in range(1, 181)
+    ]
+    _run(stopped, g)
+    resume = [
+        replace(f, ts=f.ts + timedelta(seconds=180), alt_m=112.0)
+        for f in _climb(0.0, 30, start_s=8)
+    ]
+    grades = _run(resume, g)
+    assert all(x is None for x in grades[:8])  # window still spans the stop
+    assert grades[-1] == pytest.approx(0.0, abs=0.05)  # 400 m after the stop: flat again
+
+
+def test_too_slow_to_cover_the_window_in_a_minute_gives_no_grade() -> None:
+    """400 m in over 60 s is under ~15 mph: altitude drift dominates."""
+    assert set(_run(_climb(5.0, 120, mps=5.0))) == {None}
