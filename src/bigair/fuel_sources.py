@@ -44,7 +44,8 @@ DRIFT_CAP_PER_DAY = 0.02
 
 # Diesel the van can use, in order of preference.
 _DIESEL_KINDS = ("DIESEL", "TRUCK_DIESEL")
-_STATE_RE = re.compile(r",\s*([A-Z]{2})\s+\d{5}")
+_STATE_RE = re.compile(r"(?:,\s*([^,]+))?,\s*([A-Z]{2})\s+\d{5}")
+"""``…, City, ST 12345, USA`` → (city, state)."""
 _BRANDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("loves", re.compile(r"\blove'?s\b", re.IGNORECASE)),
     ("ta", re.compile(r"^TA\b|\btravel ?centers? of america\b", re.IGNORECASE)),
@@ -214,6 +215,7 @@ class Candidate:
     """Posted price now (before member discount and drift)."""
     price_kind: str
     updated: datetime
+    city: str = ""
 
 
 def _parse_time(s: str) -> datetime:
@@ -244,7 +246,8 @@ def decode_places(body: dict[str, Any], route: RouteInfo, seg: Segment) -> list[
             Candidate(
                 place_id=str(p.get("id", "")),
                 name=str((p.get("displayName") or {}).get("text", "?")),
-                state=m.group(1) if m else "",
+                state=m.group(2) if m else "",
+                city=(m.group(1) or "").strip() if m else "",
                 mile=mile,
                 detour_mi=detour,
                 price_per_gal=money(fp["price"]),
@@ -327,7 +330,7 @@ def build_stations(
             notes.append(f"trend {drift:+.2f}")
         out.append(
             Station(
-                name=f"{c.name}, {c.state}" if c.state else c.name,
+                name=", ".join(x for x in (c.name, c.city, c.state) if x),
                 mile=c.mile,
                 price_per_gal=round(c.price_per_gal - disc + drift, 3),
                 detour_mi=round(c.detour_mi, 1),
@@ -366,7 +369,8 @@ class Unpriced:
     """An Open Roads station on the route that Google has no diesel price for."""
 
     name: str
-    state: str
+    where: str
+    """``City, ST`` (or just the state) from the address."""
     mile: float
 
 
@@ -386,7 +390,10 @@ def decode_unpriced_members(body: dict[str, Any], route: RouteInfo) -> list[Unpr
             continue
         m = _STATE_RE.search(p.get("formattedAddress", ""))
         mile, _ = route.project(loc["latitude"], loc["longitude"])
-        out.append(Unpriced(name, m.group(1) if m else "", mile))
+        where = (
+            f"{m.group(1).strip()}, {m.group(2)}" if m and m.group(1) else (m.group(2) if m else "")
+        )
+        out.append(Unpriced(name, where, mile))
     return out
 
 

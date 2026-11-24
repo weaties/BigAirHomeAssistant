@@ -119,7 +119,7 @@ def test_fuel_plan_live_wiring(
     )
     out = capsys.readouterr().out
     assert rc == 0, out
-    assert "Love's Travel Stop, OR ↑" in out
+    assert "Love's Travel Stop, Town, OR ↑" in out
     assert "Open Roads −$0.30" in out
     assert "calibrating" in out
     trip = json.loads(saved.read_text())

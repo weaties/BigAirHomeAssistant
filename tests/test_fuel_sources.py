@@ -173,6 +173,7 @@ def test_decode_places_prefers_diesel_and_computes_detour() -> None:
     assert loves.mile == pytest.approx(69.09, abs=0.3)
     assert loves.detour_mi == pytest.approx(2 * 70.0 - 138.18, abs=0.05)
     assert loves.state == "OR"
+    assert loves.city == "Town"
     assert corner.price_kind == "TRUCK_DIESEL"
     assert corner.detour_mi == pytest.approx(0.0, abs=0.05)  # on the line, no summary
 
@@ -230,6 +231,7 @@ def _cand(**kw: object) -> Candidate:
         "place_id": "p",
         "name": "Love's Travel Stop",
         "state": "OR",
+        "city": "Bend",
         "mile": 50.0,
         "detour_mi": 1.0,
         "price_per_gal": 6.50,
@@ -274,7 +276,7 @@ def test_build_stations_dedupes_and_drops_stale_prices() -> None:
         discounts={"loves": 0.30},
         max_age_h=72.0,
     )
-    assert [s.name for s in stations] == ["Pilot, OR"]
+    assert [s.name for s in stations] == ["Pilot, Bend, OR"]
     assert stations[0].price_per_gal == pytest.approx(6.50)  # Pilot: no member discount
 
 
@@ -283,8 +285,8 @@ def test_mirror_return_adds_return_leg() -> None:
     out = build_stations([_cand(mile=30.0)], r, NOW, NOW, {}, {})
     both = mirror_return(out, out_mi=100.0, local_mi=10.0)
     assert [(s.name, s.mile) for s in both] == [
-        ("Love's Travel Stop, OR ↓", 30.0),
-        ("Love's Travel Stop, OR ↑", 180.0),
+        ("Love's Travel Stop, Bend, OR ↓", 30.0),
+        ("Love's Travel Stop, Bend, OR ↑", 180.0),
     ]
 
 

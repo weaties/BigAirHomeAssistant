@@ -218,7 +218,7 @@ def _fuel_trip_live(args: argparse.Namespace) -> tuple[float, tuple[Station, ...
     )
     if found.unpriced:
         names = ", ".join(
-            f"{u.name}{', ' + u.state if u.state else ''} (mi {u.mile:.0f})" for u in found.unpriced
+            f"{u.name}{', ' + u.where if u.where else ''} (mi {u.mile:.0f})" for u in found.unpriced
         )
         print(f"Open Roads stations Google has no price for (check the app): {names}\n")
     if args.round_trip:
