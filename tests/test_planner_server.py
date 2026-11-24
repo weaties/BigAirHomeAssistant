@@ -115,3 +115,18 @@ def test_one_plan_at_a_time(tmp_path: Path) -> None:
     t.join(5)
     assert first == [200]
     next(gen, None)
+
+
+def test_access_log_names_the_request(ok_url: str) -> None:
+    from loguru import logger
+
+    lines: list[str] = []
+    sink = logger.add(lambda m: lines.append(str(m)), level="DEBUG", format="{message}")
+    try:
+        _req(f"{ok_url}/health")
+    finally:
+        logger.remove(sink)
+    (line,) = [m for m in lines if "planner http" in m]
+    assert "127.0.0.1" in line
+    assert '"GET /health HTTP/1.1" 200' in line
+    assert "%s" not in line
