@@ -129,6 +129,7 @@ src/bigair/          # all Python; one small module per concern
   state_file.py      #   atomic, fsync'd state file (fuel model's durable state)
   fill_detect.py     #   fill-up detection state machine (Critical)
   heater.py          #   Webasto fuel accounting (Critical)
+  fuel_plan.py       #   fuel-stop planner: where/how much to fill on a route
   gps_logger.py      #   gpsd TPV → GpsFix, track-point cadence
   gpsd_io.py         #   edge: gpsd JSON client
   mqtt_io.py / influx_io.py   # edges (M1)
@@ -150,6 +151,7 @@ uv run pytest                                   # all tests + coverage
 uv run ruff check . && uv run ruff format --check . && uv run mypy src/
 uv run yamllint homeassistant grafana deploy .github   # config lint
 uv run bigair display --port 8090               # dash gauge server (preview: /api/display.png)
+uv run bigair fuel-plan trip.json --tank-gal 40 --mpg 15   # fuel stops per reserve depth (docs/fuel-plan.md)
 docker compose -f deploy/docker-compose.yml config   # validate the stack
 uvx --from shellcheck-py shellcheck -x deploy/*.sh   # lint shell scripts
 
@@ -471,3 +473,10 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     position). **HA ignores discovery `object_id`**: entity ids come from the device
     and entity names (`sensor.bigair_van_fuel_tank`), so renaming a discovered
     entity breaks the dashboard; `tests/test_ha_dashboard.py` catches it.
+40. **2026-11-23 — The fuel-stop planner takes a trip file and compares reserve
+    depths** (Dan's request, #70). P1 reads a JSON trip file (route miles plus
+    stations with mile markers and prices) rather than GPX. Projecting stations
+    onto a GPX route needs the routing and places APIs, so it moves to #71. Every
+    run prints one plan per reserve depth (default 150/100/75/50 mi) next to a
+    "fill at 1/4" baseline, so Dan chooses how deep into the reserve to go. While
+    calibrating, plans use `mpg × 0.93`. Stale fuel data refuses to plan.

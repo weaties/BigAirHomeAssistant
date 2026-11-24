@@ -177,6 +177,40 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fuel_plan(args: argparse.Namespace) -> int:
+    import json
+    from pathlib import Path
+
+    from bigair.fuel_plan import (
+        PlanInput,
+        PlanRefusedError,
+        format_options,
+        naive_plan,
+        plan_options,
+        trip_from_dict,
+    )
+
+    route_mi, stations, home = trip_from_dict(json.loads(Path(args.trip).read_text()))
+    inp = PlanInput(
+        route_mi=route_mi,
+        stations=stations,
+        start_gal=args.tank_gal,
+        mpg=args.mpg,
+        capacity_gal=args.capacity,
+        stop_penalty_usd=args.stop_penalty,
+        end_value_per_gal=home if args.home_price is None else args.home_price,
+        calibrating=args.calibrating,
+    )
+    reserves = tuple(float(r) for r in args.reserves.split(","))
+    try:
+        text = format_options(inp, plan_options(inp, reserves), naive_plan(inp))
+    except PlanRefusedError as e:
+        print(f"refused: {e}")  # CLI output, not operational logging
+        return 2
+    print(text)  # CLI output, not operational logging
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bigair", description="Van telemetry services")
     parser.add_argument("--version", action="store_true", help="print version and exit")
@@ -188,6 +222,17 @@ def main(argv: list[str] | None = None) -> int:
         "--preview-port", type=int, default=0, help="keyless browser preview; 0 = off"
     )
     sub.add_parser("run", help="run the fuel service (WiCAN → fuel model → HA/MQTT, InfluxDB)")
+    fp = sub.add_parser("fuel-plan", help="where to buy fuel along a route, per reserve depth")
+    fp.add_argument("trip", help="trip JSON: route_mi, stations[], optional home_price_per_gal")
+    fp.add_argument("--tank-gal", type=float, required=True, help="fuel on board at the start")
+    fp.add_argument("--mpg", type=float, required=True, help="expected mpg (be conservative)")
+    fp.add_argument("--calibrating", action="store_true", help="tank still calibrating: lower mpg")
+    fp.add_argument(
+        "--reserves", default="150,100,75,50", help="reserve depths to compare, in miles"
+    )
+    fp.add_argument("--capacity", type=float, default=47.0)
+    fp.add_argument("--stop-penalty", type=float, default=10.0, help="$ of hassle per stop")
+    fp.add_argument("--home-price", type=float, help="$/gal value of fuel left at the end")
     args = parser.parse_args(argv)
     if args.version:
         from importlib.metadata import version
@@ -198,4 +243,6 @@ def main(argv: list[str] | None = None) -> int:
         return _display(args)
     if args.command == "run":
         return _run(args)
+    if args.command == "fuel-plan":
+        return _fuel_plan(args)
     return 0
