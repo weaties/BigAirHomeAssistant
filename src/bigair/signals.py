@@ -44,6 +44,10 @@ class ObdSample:
     odometer_mi: float | None = None
     fuel_level_pct: float | None = None
     battery_v: float | None = None  # WiCAN's own ATRV reading at OBD pin 16
+    # Slow-polled (#79): only present on the rounds that asked for them.
+    coolant_temp_c: float | None = None
+    oil_temp_c: float | None = None
+    ambient_temp_c: float | None = None
 
 
 @dataclass(frozen=True)

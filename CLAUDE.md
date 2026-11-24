@@ -186,8 +186,8 @@ tag with trip IDs, prices, coordinates or free text.
 
 | Measurement | Bucket | Tags | Key fields |
 |---|---|---|---|
-| `engine` | raw | `source` (wican) | `rpm`, `coolant_temp_c`, `intake_air_temp_c`, `maf_g_s`, `faer_ratio`, `engine_load_pct`, `boost_kpa`, `fuel_rate_lph` |
-| `vehicle` | raw | `source` | `speed_mph`, `odometer_mi`, `battery_v` |
+| `engine` | raw | `source` (wican) | `rpm`, `coolant_temp_c`, `oil_temp_c`, `intake_air_temp_c`, `maf_g_s`, `faer_ratio`, `engine_load_pct`, `boost_kpa`, `fuel_rate_lph` |
+| `vehicle` | raw | `source` | `speed_mph`, `odometer_mi`, `battery_v`, `ambient_temp_c` |
 | `driver` | raw | `source` (wican, can) | `throttle_pct`, `cruise_active`, `cruise_set_mph`, `brake_active` |
 | `fuel` | raw | `method` (fuel_rate, maf_faer, maf_fixed) | `tank_gal`, `engine_used_gal`, `heater_used_gal`, `range_mi`, `mpg_rolling`, `mpg_instant_30s`, `fuel_rate_gph`, `stale`, `calibrating` |
 | `heater` | raw | `method` (wbus_pulses, runtime_datasheet, current) | `running`, `power_level`, `pump_hz`, `fuel_gph`, `used_gal` |

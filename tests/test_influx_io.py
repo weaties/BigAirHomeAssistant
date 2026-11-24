@@ -14,6 +14,7 @@ from bigair.influx_io import (
     InfluxWriter,
     Point,
     bucket_for,
+    engine_point,
     fuel_point,
     to_line,
     track_point,
@@ -101,6 +102,27 @@ def test_vehicle_point_skips_missing_values() -> None:
     assert to_line(vehicle_point(s)) == f"vehicle,source=wican speed_mph=55.0 {TS_MS}"
 
 
+def test_engine_point_has_the_temperatures() -> None:
+    s = ObdSample(
+        ts=TS,
+        ignition=True,
+        speed_mph=0.0,
+        fuel_rate_gph=None,
+        coolant_temp_c=54.0,
+        oil_temp_c=50.0,
+        ambient_temp_c=6.0,
+    )
+    p = engine_point(s)
+    assert p is not None
+    assert to_line(p) == f"engine,source=wican coolant_temp_c=54.0,oil_temp_c=50.0 {TS_MS}"
+    assert "ambient_temp_c=6.0" in to_line(vehicle_point(s))
+
+
+def test_no_temperatures_means_no_engine_point() -> None:
+    s = ObdSample(ts=TS, ignition=True, speed_mph=0.0, fuel_rate_gph=None)
+    assert engine_point(s) is None
+
+
 def test_fuel_point() -> None:
     p = fuel_point(
         TS,
@@ -151,8 +173,20 @@ def _schema() -> dict[str, set[str]]:
 def test_mappers_only_write_fields_in_the_data_model() -> None:
     schema = _schema()
     fix = GpsFix(ts=TS, lat=1.0, lon=2.0, speed_mph=1.0, alt_m=1.0, heading_deg=1.0, hdop=1.0)
-    sample = ObdSample(ts=TS, ignition=True, speed_mph=1.0, fuel_rate_gph=1.0, odometer_mi=1.0)
+    sample = ObdSample(
+        ts=TS,
+        ignition=True,
+        speed_mph=1.0,
+        fuel_rate_gph=1.0,
+        odometer_mi=1.0,
+        coolant_temp_c=1.0,
+        oil_temp_c=1.0,
+        ambient_temp_c=1.0,
+    )
+    engine = engine_point(sample)
+    assert engine is not None
     points = [
+        engine,
         track_point(fix, mpg_30s=1.0, trip_id="t1"),
         vehicle_point(sample),
         fuel_point(
