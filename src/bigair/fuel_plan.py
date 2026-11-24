@@ -25,6 +25,7 @@ what each mile of reserve given up saves.
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass, field, replace
 
 _EPS = 1e-9
@@ -46,6 +47,8 @@ class Station:
     detour_min: float = 0.0
     """Extra minutes, round trip, including any queue."""
     diesel: bool = True
+    note: str = ""
+    """Shown beside the stop, e.g. member discount and price age."""
 
 
 @dataclass(frozen=True)
@@ -328,7 +331,7 @@ def format_options(inp: PlanInput, options: list[Plan], naive: Plan | None = Non
             lines.append(
                 f"  mi {s.station.mile:>6,.0f}  {s.station.name:<28} arrive {s.arrive_gal:>5.1f}"
                 f"  buy {s.buy_gal:>5.1f} gal @ ${s.station.price_per_gal:.2f}"
-                f"  = ${s.cost_usd:,.0f}"
+                f"  = ${s.cost_usd:,.0f}" + (f"  ({s.station.note})" if s.station.note else "")
             )
         lines.append(f"  arrive with {o.end_gal:.1f} gal")
     return "\n".join(lines)
@@ -351,12 +354,52 @@ def trip_from_dict(data: dict[str, object]) -> tuple[float, tuple[Station, ...],
             detour_mi=float(s.get("detour_mi", 0.0)),
             detour_min=float(s.get("detour_min", 0.0)),
             diesel=bool(s.get("diesel", True)),
+            note=str(s.get("note", "")),
         )
         for s in raw
     )
     route_mi = float(data["route_mi"])  # type: ignore[arg-type]
     home = data.get("home_price_per_gal")
     if home is None:
-        diesel = [s for s in stations if s.diesel and s.mile <= route_mi]
-        home = max(diesel, key=lambda s: s.mile).price_per_gal if diesel else 0.0
+        home = default_home_price(stations, route_mi)
     return route_mi, stations, float(home)  # type: ignore[arg-type]
+
+
+def default_home_price(
+    stations: tuple[Station, ...], route_mi: float, near_mi: float = 30.0
+) -> float:
+    """Typical diesel price near the destination: the median within ``near_mi``.
+
+    Uses the last five stations when fewer than three are that close, and 0
+    when there are none. A median keeps one expensive station from inflating
+    the value of fuel brought home.
+    """
+    diesel = sorted((s for s in stations if s.diesel and s.mile <= route_mi), key=lambda s: s.mile)
+    if not diesel:
+        return 0.0
+    near = [s.price_per_gal for s in diesel if s.mile >= route_mi - near_mi]
+    if len(near) < 3:
+        near = [s.price_per_gal for s in diesel[-5:]]
+    return statistics.median(near)
+
+
+def trip_to_dict(
+    route_mi: float, stations: tuple[Station, ...], home_price_per_gal: float
+) -> dict[str, object]:
+    """Inverse of ``trip_from_dict``: save a live trip for re-planning offline."""
+    return {
+        "route_mi": route_mi,
+        "home_price_per_gal": home_price_per_gal,
+        "stations": [
+            {
+                "name": s.name,
+                "mile": round(s.mile, 1),
+                "price_per_gal": s.price_per_gal,
+                "detour_mi": s.detour_mi,
+                "detour_min": s.detour_min,
+                "diesel": s.diesel,
+                "note": s.note,
+            }
+            for s in stations
+        ],
+    }

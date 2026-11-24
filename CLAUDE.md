@@ -85,7 +85,7 @@ Principles:
 - **bigair is the single InfluxDB writer.** HA's InfluxDB integration is not
   used — its entity-shaped schema would fight ours. One writer, one schema.
 - **Hardware isolation.** Only edge modules (`mqtt_io.py`, `influx_io.py`,
-  `gps_logger.py`'s gpsd client) touch the network or devices, and only
+  `gps_logger.py`'s gpsd client, `google_io.py`, `eia_io.py`) touch the network or devices, and only
   `main.py` imports them. Logic modules (`fuel_model.py`, `fill_detect.py`,
   `heater.py`) take and return frozen dataclasses from `signals.py`, so they
   test without hardware.
@@ -130,6 +130,8 @@ src/bigair/          # all Python; one small module per concern
   fill_detect.py     #   fill-up detection state machine (Critical)
   heater.py          #   Webasto fuel accounting (Critical)
   fuel_plan.py       #   fuel-stop planner: where/how much to fill on a route
+  fuel_sources.py    #   route/station/price-trend decoders for the planner
+  google_io.py / eia_io.py   # edges: Google Routes + Places, EIA prices (#71)
   gps_logger.py      #   gpsd TPV → GpsFix, track-point cadence
   gpsd_io.py         #   edge: gpsd JSON client
   mqtt_io.py / influx_io.py   # edges (M1)
@@ -480,3 +482,12 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     run prints one plan per reserve depth (default 150/100/75/50 mi) next to a
     "fill at 1/4" baseline, so Dan chooses how deep into the reserve to go. While
     calibrating, plans use `mpg × 0.93`. Stale fuel data refuses to plan.
+41. **2026-11-23 — Live fuel-plan sources** (#71; Dan approved a billed Google
+    key). Google Routes + Places API (New) search-along-route supply the route
+    and the posted diesel prices (`fuelOptions`). EIA weekly `EPD2D` supplies the
+    trend: `SCA` for California, `R5XCA` for the rest of the West Coast (WA and OR
+    have no series), capped at ±2¢/day. Dan is an **Open Roads** member, so
+    Love's, TA and Petro are priced at posted −$0.30 by default (the low end of
+    the reported 30–50¢). It's a planning estimate, not the pump price. The
+    planner is a CLI on the Mac for now; it reads the tank over Tailscale MQTT.
+    The van runs it in #72.

@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bigair.fuel_plan import Station
 
 
 def _display(args: argparse.Namespace) -> int:
@@ -177,29 +181,109 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fuel_trip_live(args: argparse.Namespace) -> tuple[float, tuple[Station, ...]]:
+    """Route, stations and prices from Google + EIA (#71)."""
+    from datetime import UTC, datetime
+
+    from loguru import logger
+
+    from bigair import eia_io, google_io
+    from bigair.fuel_sources import (
+        build_stations,
+        collect_candidates,
+        decode_eia,
+        decode_route,
+        drift_per_day,
+        mirror_return,
+        parse_discounts,
+    )
+
+    key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if not key:
+        raise SystemExit("set GOOGLE_MAPS_API_KEY (Routes API + Places API (New) enabled)")
+    route = decode_route(google_io.compute_route(key, args.origin, args.to, args.via or []))
+    found = collect_candidates(
+        route, lambda seg, tok, q, typ: google_io.search_along(key, seg, tok, q, typ)
+    )
+    try:
+        series = decode_eia(eia_io.fetch_diesel(os.environ.get("EIA_API_KEY", "DEMO_KEY")))
+        drifts = {area: drift_per_day(v) for area, v in series.items()}
+    except OSError as e:  # trend is a small term; plan without it rather than fail
+        logger.warning("EIA trend unavailable ({}); planning without price drift", e)
+        drifts = {}
+    now = datetime.now(UTC)
+    depart = datetime.fromisoformat(args.depart).astimezone(UTC) if args.depart else now
+    stations = build_stations(
+        found.candidates, route, now, depart, drifts, parse_discounts(args.discount), args.max_age_h
+    )
+    if found.unpriced:
+        names = ", ".join(
+            f"{u.name}{', ' + u.where if u.where else ''} (mi {u.mile:.0f})" for u in found.unpriced
+        )
+        print(f"Open Roads stations Google has no price for (check the app): {names}\n")
+    if args.round_trip:
+        return 2 * route.total_mi + args.local_mi, mirror_return(
+            stations, route.total_mi, args.local_mi
+        )
+    return route.total_mi, stations
+
+
 def _fuel_plan(args: argparse.Namespace) -> int:
+    import asyncio
     import json
-    from pathlib import Path
 
     from bigair.fuel_plan import (
         PlanInput,
         PlanRefusedError,
+        default_home_price,
         format_options,
         naive_plan,
         plan_options,
         trip_from_dict,
+        trip_to_dict,
     )
 
-    route_mi, stations, home = trip_from_dict(json.loads(Path(args.trip).read_text()))
+    if args.trip:
+        route_mi, stations, home = trip_from_dict(json.loads(Path(args.trip).read_text()))
+    elif args.origin and args.to:
+        route_mi, stations = _fuel_trip_live(args)
+        home = default_home_price(stations, route_mi)
+        if args.save:
+            Path(args.save).write_text(json.dumps(trip_to_dict(route_mi, stations, home), indent=1))
+    else:
+        print("give a trip file, or --from and --to")  # CLI output
+        return 2
+
+    tank, mpg, calibrating, stale = args.tank_gal, args.mpg, args.calibrating, False
+    if args.live:
+        from bigair.fuel_sources import live_fuel_from_state
+        from bigair.ha_discovery import FUEL_STATE_TOPIC
+        from bigair.mqtt_io import read_retained
+
+        payload = asyncio.run(read_retained(args.mqtt_host, 1883, FUEL_STATE_TOPIC))
+        if payload is None:
+            print(f"no fuel state from {args.mqtt_host}")  # CLI output
+            return 2
+        live = live_fuel_from_state(payload)
+        tank = live.tank_gal if tank is None else tank
+        mpg = live.mpg if mpg is None else mpg
+        calibrating, stale = calibrating or live.calibrating, live.stale
+        if live.fill_pending:
+            print("note: a fill is pending, so the tank reads low until it's confirmed")
+    if tank is None or mpg is None:
+        print("need --tank-gal and --mpg, or --live")  # CLI output
+        return 2
+
     inp = PlanInput(
         route_mi=route_mi,
         stations=stations,
-        start_gal=args.tank_gal,
-        mpg=args.mpg,
+        start_gal=tank,
+        mpg=mpg,
         capacity_gal=args.capacity,
         stop_penalty_usd=args.stop_penalty,
         end_value_per_gal=home if args.home_price is None else args.home_price,
-        calibrating=args.calibrating,
+        calibrating=calibrating,
+        stale=stale,
     )
     reserves = tuple(float(r) for r in args.reserves.split(","))
     try:
@@ -223,9 +307,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser("run", help="run the fuel service (WiCAN → fuel model → HA/MQTT, InfluxDB)")
     fp = sub.add_parser("fuel-plan", help="where to buy fuel along a route, per reserve depth")
-    fp.add_argument("trip", help="trip JSON: route_mi, stations[], optional home_price_per_gal")
-    fp.add_argument("--tank-gal", type=float, required=True, help="fuel on board at the start")
-    fp.add_argument("--mpg", type=float, required=True, help="expected mpg (be conservative)")
+    fp.add_argument("trip", nargs="?", help="trip JSON (route_mi, stations[]); or use --from/--to")
+    fp.add_argument("--from", dest="origin", help="live: origin address (Google Routes)")
+    fp.add_argument("--to", help="live: destination address")
+    fp.add_argument("--via", action="append", help="live: waypoint (repeatable)")
+    fp.add_argument("--round-trip", action="store_true", help="live: out and back the same way")
+    fp.add_argument("--local-mi", type=float, default=20.0, help="miles driven at the far end")
+    fp.add_argument("--depart", help="ISO time of departure (default now), for the price trend")
+    fp.add_argument(
+        "--discount",
+        default="loves=0.30,ta=0.30,petro=0.30",
+        help="member discount $/gal by brand (Open Roads); 'none' to disable",
+    )
+    fp.add_argument("--max-age-h", type=float, default=72.0, help="ignore older station prices")
+    fp.add_argument("--save", help="live: write the trip file for re-planning offline")
+    fp.add_argument("--live", action="store_true", help="tank and mpg from bigair over MQTT")
+    fp.add_argument("--mqtt-host", default=os.environ.get("BIGAIR_MQTT_HOST", "bigair-ha"))
+    fp.add_argument("--tank-gal", type=float, help="fuel on board at the start")
+    fp.add_argument("--mpg", type=float, help="expected mpg (be conservative)")
     fp.add_argument("--calibrating", action="store_true", help="tank still calibrating: lower mpg")
     fp.add_argument(
         "--reserves", default="150,100,75,50", help="reserve depths to compare, in miles"

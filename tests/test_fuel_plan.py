@@ -229,7 +229,7 @@ def test_trip_from_dict() -> None:
     assert stations[1].detour_mi == 1.0
 
 
-def test_trip_without_home_price_values_leftover_at_last_station() -> None:
+def test_trip_without_home_price_uses_median_near_the_end() -> None:
     from bigair.fuel_plan import trip_from_dict
 
     _, _, home = trip_from_dict(
@@ -241,4 +241,30 @@ def test_trip_without_home_price_values_leftover_at_last_station() -> None:
             ],
         }
     )
-    assert home == 3.0
+    assert home == 3.5  # fewer than 3 within 30 mi: median of the last five
+
+
+def test_trip_round_trips_through_dict() -> None:
+    from bigair.fuel_plan import trip_from_dict, trip_to_dict
+
+    s = Station("Love's, CA", 640.0, 6.49, 0.4, 0.8, True, "Open Roads −$0.30; 3 h old")
+    assert trip_from_dict(trip_to_dict(780.0, (s,), 6.89)) == (780.0, (s,), 6.89)
+
+
+def test_notes_are_printed() -> None:
+    s = Station("A", 50.0, 4.0, note="Open Roads −$0.30")
+    inp = _inp(stations=(s, B))
+    assert "(Open Roads −$0.30)" in format_options(inp, plan_options(inp, (0.0,)))
+
+
+def test_home_price_ignores_one_expensive_station_at_the_end() -> None:
+    from bigair.fuel_plan import default_home_price
+
+    near = (
+        Station("cheap1", 280.0, 6.20),
+        Station("cheap2", 285.0, 6.30),
+        Station("cheap3", 290.0, 6.40),
+        Station("pricey", 299.0, 7.70),
+        Station("far", 10.0, 9.99),
+    )
+    assert default_home_price(near, 300.0) == pytest.approx(6.35)
