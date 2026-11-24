@@ -5,7 +5,7 @@ name: bigair
 
 services:
   mosquitto:
-    image: eclipse-mosquitto:2.0.20
+    image: eclipse-mosquitto:2.0.23
     restart: unless-stopped
     ports: ["1883:1883"]
     volumes:
