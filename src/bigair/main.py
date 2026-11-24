@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from bigair.fuel_plan import Station
+    from bigair.fuel_sources import LiveFuel
+    from bigair.trip_service import TripEdges
 
 
 def _display(args: argparse.Namespace) -> int:
@@ -181,82 +183,111 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _fuel_trip_live(args: argparse.Namespace) -> tuple[float, tuple[Station, ...]]:
-    """Route, stations and prices from Google + EIA (#71)."""
+def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
+    """The real network edges for a trip plan (#71, #75)."""
+    import asyncio
     from datetime import UTC, datetime
 
-    from loguru import logger
-
-    from bigair import eia_io, google_io
-    from bigair.fuel_sources import (
-        build_stations,
-        collect_candidates,
-        decode_eia,
-        decode_route,
-        drift_per_day,
-        mirror_return,
-        parse_discounts,
-    )
+    from bigair import eia_io, google_io, weather_io
+    from bigair.fuel_sources import live_fuel_from_state
+    from bigair.gpsd_io import current_fix
+    from bigair.ha_discovery import FUEL_STATE_TOPIC
+    from bigair.mqtt_io import read_retained
+    from bigair.trip_service import TripEdges, TripError
 
     key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
     if not key:
-        raise SystemExit("set GOOGLE_MAPS_API_KEY (Routes API + Places API (New) enabled)")
-    route = decode_route(google_io.compute_route(key, args.origin, args.to, args.via or []))
-    found = collect_candidates(
-        route, lambda seg, tok, q, typ: google_io.search_along(key, seg, tok, q, typ)
+        raise TripError("GOOGLE_MAPS_API_KEY isn't set (Routes API + Places API (New))")
+    eia_key = os.environ.get("EIA_API_KEY") or "DEMO_KEY"
+
+    def fuel_state() -> LiveFuel | None:
+        payload = asyncio.run(read_retained(mqtt_host, 1883, FUEL_STATE_TOPIC))
+        return live_fuel_from_state(payload) if payload else None
+
+    def position() -> tuple[float, float] | None:
+        fix = asyncio.run(current_fix()) if gpsd else None
+        return (fix.lat, fix.lon) if fix else None
+
+    return TripEdges(
+        route=lambda o, d, via: google_io.compute_route(key, o, d, via),
+        search=lambda seg, tok, q, typ: google_io.search_along(key, seg, tok, q, typ),
+        now=lambda: datetime.now(UTC),
+        eia=lambda: eia_io.fetch_diesel(eia_key),
+        forecasts=weather_io.fetch_forecasts,
+        alerts=weather_io.fetch_alerts,
+        fuel_state=fuel_state,
+        position=position,
     )
-    try:
-        series = decode_eia(eia_io.fetch_diesel(os.environ.get("EIA_API_KEY", "DEMO_KEY")))
-        drifts = {area: drift_per_day(v) for area, v in series.items()}
-    except OSError as e:  # trend is a small term; plan without it rather than fail
-        logger.warning("EIA trend unavailable ({}); planning without price drift", e)
-        drifts = {}
-    now = datetime.now(UTC)
-    depart = datetime.fromisoformat(args.depart).astimezone(UTC) if args.depart else now
-    stations = build_stations(
-        found.candidates, route, now, depart, drifts, parse_discounts(args.discount), args.max_age_h
-    )
-    if found.unpriced:
-        names = ", ".join(
-            f"{u.name}{', ' + u.where if u.where else ''} (mi {u.mile:.0f})" for u in found.unpriced
-        )
-        print(f"Open Roads stations Google has no price for (check the app): {names}\n")
-    if args.round_trip:
-        return 2 * route.total_mi + args.local_mi, mirror_return(
-            stations, route.total_mi, args.local_mi
-        )
-    return route.total_mi, stations
 
 
 def _fuel_plan(args: argparse.Namespace) -> int:
     import asyncio
     import json
+    from datetime import datetime
 
     from bigair.fuel_plan import (
         PlanInput,
         PlanRefusedError,
-        default_home_price,
         format_options,
         naive_plan,
         plan_options,
         trip_from_dict,
         trip_to_dict,
     )
+    from bigair.fuel_sources import live_fuel_from_state, parse_discounts
+    from bigair.trip_service import TripError, TripRequest, plan_trip, weather_summary
 
-    if args.trip:
-        route_mi, stations, home = trip_from_dict(json.loads(Path(args.trip).read_text()))
-    elif args.origin and args.to:
-        route_mi, stations = _fuel_trip_live(args)
-        home = default_home_price(stations, route_mi)
+    reserves = tuple(float(r) for r in args.reserves.split(","))
+    if args.origin and args.to:  # live: route, prices and weather from the network
+        try:
+            req = TripRequest(
+                origin=args.origin,
+                destination=args.to,
+                via=tuple(args.via or ()),
+                round_trip=args.round_trip,
+                local_mi=args.local_mi,
+                depart=datetime.fromisoformat(args.depart) if args.depart else None,
+                return_depart=(
+                    datetime.fromisoformat(args.return_depart) if args.return_depart else None
+                ),
+                reserves=reserves,
+                discounts=parse_discounts(args.discount),
+                tank_gal=args.tank_gal,
+                mpg=args.mpg,
+                calibrating=args.calibrating,
+                capacity_gal=args.capacity,
+                stop_penalty_usd=args.stop_penalty,
+                home_price=args.home_price,
+                max_age_h=args.max_age_h,
+            )
+            r = plan_trip(req, _trip_edges(args.mqtt_host, gpsd=False))
+        except TripError as e:
+            print(f"refused: {e}")  # CLI output, not operational logging
+            return 2
         if args.save:
-            Path(args.save).write_text(json.dumps(trip_to_dict(route_mi, stations, home), indent=1))
-    else:
+            trip = trip_to_dict(r.trip_mi, r.stations, r.inp.end_value_per_gal)
+            Path(args.save).write_text(json.dumps(trip, indent=1))
+        lines = [f"Note: {w}" for w in r.warnings]
+        if r.unpriced:
+            names = ", ".join(
+                f"{u.name}{', ' + u.where if u.where else ''} (mi {u.mile:.0f})" for u in r.unpriced
+            )
+            lines.append(f"Open Roads stations Google has no price for (check the app): {names}")
+        lines += [
+            f"Alert: {a.event}, {a.area[:70]}"
+            + (f" (until {a.ends:%a %H:%M} UTC)" if a.ends else "")
+            for a in r.alerts
+        ]
+        lines += [f"Weather {w}" for w in weather_summary(r)]
+        print("\n".join([*lines, "", format_options(r.inp, r.options, r.naive)]))
+        return 0
+
+    if not args.trip:
         print("give a trip file, or --from and --to")  # CLI output
         return 2
-
+    route_mi, stations, home = trip_from_dict(json.loads(Path(args.trip).read_text()))
     tank, mpg, calibrating, stale = args.tank_gal, args.mpg, args.calibrating, False
     if args.live:
-        from bigair.fuel_sources import live_fuel_from_state
         from bigair.ha_discovery import FUEL_STATE_TOPIC
         from bigair.mqtt_io import read_retained
 
@@ -268,12 +299,9 @@ def _fuel_plan(args: argparse.Namespace) -> int:
         tank = live.tank_gal if tank is None else tank
         mpg = live.mpg if mpg is None else mpg
         calibrating, stale = calibrating or live.calibrating, live.stale
-        if live.fill_pending:
-            print("note: a fill is pending, so the tank reads low until it's confirmed")
     if tank is None or mpg is None:
         print("need --tank-gal and --mpg, or --live")  # CLI output
         return 2
-
     inp = PlanInput(
         route_mi=route_mi,
         stations=stations,
@@ -285,13 +313,44 @@ def _fuel_plan(args: argparse.Namespace) -> int:
         calibrating=calibrating,
         stale=stale,
     )
-    reserves = tuple(float(r) for r in args.reserves.split(","))
     try:
         text = format_options(inp, plan_options(inp, reserves), naive_plan(inp))
     except PlanRefusedError as e:
         print(f"refused: {e}")  # CLI output, not operational logging
         return 2
     print(text)  # CLI output, not operational logging
+    return 0
+
+
+def _planner(args: argparse.Namespace) -> int:
+    from loguru import logger
+
+    from bigair.planner_server import make_server
+    from bigair.trip_service import TripError, plan_trip, request_from_json, result_to_json
+
+    try:
+        edges = _trip_edges(args.mqtt_host)
+    except TripError as e:
+        # Serve the page and the cached plan anyway; planning says what's missing.
+        logger.error("planner can't plan: {}", e)
+        problem = str(e)
+        edges = None
+
+    def run(payload: dict[str, Any]) -> dict[str, Any]:
+        if edges is None:
+            raise TripError(f"{problem} on the Pi (deploy/.env)")
+        return result_to_json(plan_trip(request_from_json(payload), edges))
+
+    server = make_server(
+        args.host,
+        args.port,
+        run,
+        Path(args.cache),
+        daily_limit=args.daily_limit,
+    )
+    logger.info("trip planner on {}:{}", args.host, args.port)
+    with contextlib.suppress(KeyboardInterrupt):
+        server.serve_forever()
     return 0
 
 
@@ -320,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         help="member discount $/gal by brand (Open Roads); 'none' to disable",
     )
     fp.add_argument("--max-age-h", type=float, default=72.0, help="ignore older station prices")
+    fp.add_argument("--return-depart", help="live round trip: ISO time you leave for home")
     fp.add_argument("--save", help="live: write the trip file for re-planning offline")
     fp.add_argument("--live", action="store_true", help="tank and mpg from bigair over MQTT")
     fp.add_argument("--mqtt-host", default=os.environ.get("BIGAIR_MQTT_HOST", "bigair-ha"))
@@ -332,6 +392,14 @@ def main(argv: list[str] | None = None) -> int:
     fp.add_argument("--capacity", type=float, default=47.0)
     fp.add_argument("--stop-penalty", type=float, default=10.0, help="$ of hassle per stop")
     fp.add_argument("--home-price", type=float, help="$/gal value of fuel left at the end")
+    pl = sub.add_parser("planner", help="serve the trip planner page (#75)")
+    pl.add_argument("--host", default="0.0.0.0")  # noqa: S104 — van LAN + tailnet, rate-limited
+    pl.add_argument("--port", type=int, default=int(os.environ.get("PLANNER_PORT", "8092")))
+    pl.add_argument("--cache", default=os.environ.get("PLANNER_CACHE", "/data/trip-plan.json"))
+    pl.add_argument(
+        "--daily-limit", type=int, default=int(os.environ.get("PLANNER_DAILY_LIMIT", "20"))
+    )
+    pl.add_argument("--mqtt-host", default=os.environ.get("MQTT_HOST", "localhost"))
     args = parser.parse_args(argv)
     if args.version:
         from importlib.metadata import version
@@ -344,4 +412,6 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.command == "fuel-plan":
         return _fuel_plan(args)
+    if args.command == "planner":
+        return _planner(args)
     return 0

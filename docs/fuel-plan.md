@@ -71,6 +71,44 @@ uv run bigair fuel-plan --from "Seattle, WA" --to "Sonoma Raceway, CA" --round-t
 5. Keep the key out of git: put it in your shell profile on the Mac, or in
    `deploy/.env` on the Pi.
 
+## Trip planner page on the Pi (#75)
+
+The `planner` Compose service runs `bigair planner` on port 8092 (host
+networking). Open it:
+
+- on the van Wi-Fi: `http://bigair-ha.local:8092/`
+- in the Companion app: **Van** dashboard → **Trip** (a full-screen webpage card)
+- over the tailnet: `http://bigair-ha:8092/`
+
+The page has a form (from, which can be **📍 Here** using the van's GPS through
+host gpsd; to; via, separated by `;`; round trip; leave; leave for home;
+reserve depths) and shows:
+
+- **Fuel stops by reserve depth:** one chip per depth, with its stops, tank
+  levels, cost, and savings against the most cautious depth and against
+  filling at ¼ tank.
+- **Weather on the way:** the route coloured clear / rain / snow-ice / severe
+  at your ETA, with labels about every 75 mi and every snowy or severe spot.
+  Round trips have a Going / Coming home toggle. The **leave slider** (−12 h
+  to +72 h) re-times the weather in the browser without a new request. Fuel
+  prices aren't re-planned.
+- **Weather alerts** (NWS) near the route, the **along-the-way** table, and
+  **Open Roads stations without a price**.
+
+Weather comes from Open-Meteo (free, no key): hourly forecasts for 16 days at
+points every 25 mi, so the far days are less certain. Alerts come from NWS (US
+only). Each plan is about 20–30 billed Google searches plus a few free
+weather calls. Plans run one at a time, up to `PLANNER_DAILY_LIMIT` (20) a day.
+The last plan is cached in `data/bigair/trip-plan.json` and shown when the page
+opens, with a banner once it's more than 6 h old.
+
+Offline, the page still opens and shows the last plan. The map library and
+tiles need internet, so the map shows a notice instead, but the stops and
+weather tables still work.
+
+The command line runs the same plan, weather included:
+`bigair fuel-plan --from … --to … --round-trip --live --depart … --return-depart …`.
+
 ## Trip file
 
 Real trips stay out of git, because this repo is public. Keep them on the Pi

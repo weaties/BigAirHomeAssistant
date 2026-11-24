@@ -1,0 +1,428 @@
+"""A whole trip plan: route, fuel stops per reserve depth, weather along the way (#75).
+
+Shared by the CLI (`bigair fuel-plan --from/--to`) and the planner web server
+(`bigair planner`). Every network call comes in through ``TripEdges``, so this
+module imports no edges; ``main.py`` wires the real ones in.
+
+Failures are graded. With no route, no fuel data or stale fuel data, there is no
+plan (``TripError``). Missing weather, alerts or the price trend only add a
+warning, because the fuel plan stands without them.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any
+
+from bigair.fuel_plan import (
+    Plan,
+    PlanInput,
+    PlanRefusedError,
+    default_home_price,
+    naive_plan,
+    plan_options,
+)
+from bigair.fuel_sources import (
+    OPEN_ROADS_DEFAULT,
+    RouteInfo,
+    Unpriced,
+    build_stations,
+    collect_candidates,
+    decode_eia,
+    decode_route,
+    drift_per_day,
+    encode_polyline,
+    mirror_return,
+)
+from bigair.route_weather import (
+    CLASSIFY,
+    WMO_LABELS,
+    Alert,
+    Hourly,
+    RoutePoint,
+    classify,
+    conditions_at,
+    decode_nws_alerts,
+    decode_open_meteo,
+    return_leg_points,
+    sample_points,
+    wmo_label,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from bigair.fuel_plan import Station
+    from bigair.fuel_sources import LiveFuel, Segment
+
+HERE = ("here", "current location", "current")
+DEFAULT_RESERVES = (150.0, 100.0, 75.0, 50.0)
+ALERT_EVERY = 2
+"""Ask NWS about every other weather point (about every 50 mi)."""
+
+
+class TripError(RuntimeError):
+    """No trustworthy plan: the message says why."""
+
+
+@dataclass(frozen=True)
+class TripRequest:
+    origin: str
+    destination: str
+    via: tuple[str, ...] = ()
+    round_trip: bool = False
+    local_mi: float = 20.0
+    depart: datetime | None = None
+    return_depart: datetime | None = None
+    reserves: tuple[float, ...] = DEFAULT_RESERVES
+    discounts: dict[str, float] = field(default_factory=lambda: dict(OPEN_ROADS_DEFAULT))
+    tank_gal: float | None = None
+    mpg: float | None = None
+    calibrating: bool = False
+    capacity_gal: float = 47.0
+    stop_penalty_usd: float = 10.0
+    home_price: float | None = None
+    max_age_h: float = 72.0
+    weather_every_mi: float = 25.0
+
+
+@dataclass(frozen=True)
+class TripEdges:
+    route: Callable[[str, str, list[str]], dict[str, Any]]
+    search: Callable[[Segment, str | None, str, str | None], dict[str, Any]]
+    now: Callable[[], datetime]
+    eia: Callable[[], dict[str, Any]] | None = None
+    forecasts: Callable[[list[tuple[float, float]]], list[dict[str, Any]]] | None = None
+    alerts: Callable[[float, float], dict[str, Any]] | None = None
+    fuel_state: Callable[[], LiveFuel | None] | None = None
+    position: Callable[[], tuple[float, float] | None] | None = None
+
+
+@dataclass(frozen=True)
+class TripResult:
+    request: TripRequest
+    generated_at: datetime
+    depart: datetime
+    return_depart: datetime | None
+    route: RouteInfo
+    trip_mi: float
+    stations: tuple[Station, ...]
+    unpriced: list[Unpriced]
+    inp: PlanInput
+    options: list[Plan]
+    naive: Plan
+    points: list[RoutePoint]
+    hourly: list[Hourly]
+    alerts: list[Alert]
+    warnings: tuple[str, ...]
+
+
+def plan_trip(req: TripRequest, edges: TripEdges) -> TripResult:
+    now = edges.now()
+    warnings: list[str] = []
+
+    origin = req.origin
+    if origin.strip().lower() in HERE:
+        pos = edges.position() if edges.position else None
+        if pos is None:
+            raise TripError("no GPS fix for the current location; type a starting place")
+        origin = f"{pos[0]:.5f},{pos[1]:.5f}"
+
+    try:
+        route = decode_route(edges.route(origin, req.destination, list(req.via)))
+    except ValueError as e:
+        raise TripError(f"no route from {req.origin} to {req.destination}") from e
+
+    tank, mpg, calibrating, stale = req.tank_gal, req.mpg, req.calibrating, False
+    if edges.fuel_state is not None:
+        live = edges.fuel_state()
+        if live is None and (tank is None or mpg is None):
+            raise TripError("no fuel state from bigair; give the tank and mpg")
+        if live is not None:
+            tank = live.tank_gal if tank is None else tank
+            mpg = live.mpg if mpg is None else mpg
+            calibrating = calibrating or live.calibrating
+            stale = live.stale
+            if live.fill_pending:
+                warnings.append("A fill is pending, so the tank reads low until it's confirmed.")
+    if tank is None or mpg is None:
+        raise TripError("need the tank and mpg (or live fuel state)")
+
+    drifts: dict[str, float] = {}
+    if edges.eia is not None:
+        try:
+            series = decode_eia(edges.eia())
+            drifts = {area: drift_per_day(v) for area, v in series.items()}
+        except (OSError, ValueError, KeyError) as e:
+            warnings.append(f"Price trend unavailable ({e}); planned without it.")
+
+    depart = req.depart or now
+    found = collect_candidates(route, edges.search)
+    stations = build_stations(
+        found.candidates, route, now, depart, drifts, req.discounts, req.max_age_h
+    )
+    out_s = route.duration_s
+    return_depart: datetime | None = None
+    if req.round_trip:
+        trip_mi = 2 * route.total_mi + req.local_mi
+        stations = mirror_return(stations, route.total_mi, req.local_mi)
+        return_depart = req.return_depart or depart + timedelta(seconds=out_s, hours=2)
+    else:
+        trip_mi = route.total_mi
+
+    home = default_home_price(stations, trip_mi) if req.home_price is None else req.home_price
+    inp = PlanInput(
+        route_mi=trip_mi,
+        stations=stations,
+        start_gal=tank,
+        mpg=mpg,
+        capacity_gal=req.capacity_gal,
+        stop_penalty_usd=req.stop_penalty_usd,
+        end_value_per_gal=home,
+        calibrating=calibrating,
+        stale=stale,
+    )
+    try:
+        options = plan_options(inp, req.reserves)
+        naive = naive_plan(inp)
+    except PlanRefusedError as e:
+        raise TripError(str(e)) from e
+
+    points: list[RoutePoint] = []
+    hourly: list[Hourly] = []
+    alerts: list[Alert] = []
+    if edges.forecasts is not None:
+        out_pts = sample_points(route, req.weather_every_mi)
+        try:
+            hourly = decode_open_meteo(edges.forecasts([(p.lat, p.lon) for p in out_pts]))
+            points = out_pts
+            if req.round_trip:
+                points = out_pts + return_leg_points(out_pts, route.total_mi, req.local_mi, out_s)
+        except (OSError, ValueError, KeyError) as e:
+            warnings.append(f"Weather unavailable ({e}).")
+        if edges.alerts is not None and out_pts:
+            try:
+                picks = out_pts[::ALERT_EVERY] + [out_pts[-1]]
+                alerts = decode_nws_alerts([edges.alerts(p.lat, p.lon) for p in picks])
+            except (OSError, ValueError, KeyError) as e:
+                warnings.append(f"Weather alerts unavailable ({e}).")
+
+    return TripResult(
+        request=req,
+        generated_at=now,
+        depart=depart,
+        return_depart=return_depart,
+        route=route,
+        trip_mi=trip_mi,
+        stations=stations,
+        unpriced=found.unpriced,
+        inp=inp,
+        options=options,
+        naive=naive,
+        points=points,
+        hourly=hourly,
+        alerts=alerts,
+        warnings=tuple(warnings),
+    )
+
+
+# --- presentation -----------------------------------------------------------------
+
+
+def leg_start(r: TripResult, leg: str) -> datetime:
+    return r.return_depart if leg == "back" and r.return_depart else r.depart
+
+
+def weather_summary(r: TripResult) -> list[str]:
+    """One line per leg: how much of it is clear/wet/snow/severe, and the worst spot."""
+    rank = {"clear": 0, "wet": 1, "snow": 2, "severe": 3}
+    lines: list[str] = []
+    for leg in ("out", "back"):
+        pts = [p for p in r.points if p.leg == leg]
+        if not pts:
+            continue
+        counts: Counter[str] = Counter()
+        worst: tuple[int, RoutePoint, str, datetime] | None = None
+        unknown = 0
+        for p in pts:
+            when = leg_start(r, leg) + timedelta(seconds=p.offset_s)
+            c = conditions_at(r.hourly[p.series], when) if p.series < len(r.hourly) else None
+            if c is None:
+                unknown += 1
+                continue
+            cls = classify(c)
+            counts[cls] += 1
+            if worst is None or rank[cls] > worst[0]:
+                worst = (rank[cls], p, wmo_label(c.code), when)
+        name = "Out" if leg == "out" else "Back"
+        parts = [f"{counts[k]} {k}" for k in ("clear", "wet", "snow", "severe") if counts[k]]
+        if unknown:
+            parts.append(f"{unknown} beyond the forecast")
+        line = f"{name}: " + ", ".join(parts)
+        if worst is not None and worst[0] > 0:
+            when = worst[3].astimezone(leg_start(r, leg).tzinfo)
+            line += f"; worst: {worst[2]} near mi {worst[1].mile:.0f} ({when:%a %H:%M %Z})"
+        lines.append(line)
+    return lines
+
+
+def _r1(vals: tuple[float, ...]) -> list[float]:
+    return [round(v, 1) for v in vals]
+
+
+def _iso(d: datetime | None) -> str | None:
+    return d.isoformat() if d else None
+
+
+def _plan_json(p: Plan, out_mi: float, round_trip: bool) -> dict[str, Any]:
+    return {
+        "reserve_mi": p.reserve_mi,
+        "feasible": p.feasible,
+        "reason": p.reason,
+        "net_cost_usd": round(p.net_cost_usd, 2) if p.feasible else None,
+        "fuel_cost_usd": round(p.fuel_cost_usd, 2),
+        "min_gal": p.min_gal,
+        "end_gal": p.end_gal,
+        "stops": [
+            {
+                "name": s.station.name,
+                "mile": round(s.station.mile, 1),
+                "leg": "back" if round_trip and s.station.mile > out_mi else "out",
+                "lat": s.station.lat,
+                "lon": s.station.lon,
+                "arrive_gal": s.arrive_gal,
+                "buy_gal": s.buy_gal,
+                "price_per_gal": s.station.price_per_gal,
+                "cost_usd": round(s.cost_usd, 2),
+                "note": s.station.note,
+            }
+            for s in p.stops
+        ],
+    }
+
+
+def result_to_json(r: TripResult) -> dict[str, Any]:
+    """Everything the planner page draws, as plain JSON."""
+    rt = r.request.round_trip
+    return {
+        "generated_at": _iso(r.generated_at),
+        "request": {
+            "origin": r.request.origin,
+            "destination": r.request.destination,
+            "via": list(r.request.via),
+            "round_trip": rt,
+            "local_mi": r.request.local_mi,
+            "reserves": list(r.request.reserves),
+        },
+        "depart": _iso(r.depart),
+        "return_depart": _iso(r.return_depart),
+        "route": {
+            "polyline": encode_polyline(list(r.route.points)),
+            "one_way_mi": round(r.route.total_mi, 1),
+            "duration_s": r.route.duration_s,
+        },
+        "trip_mi": round(r.trip_mi, 1),
+        "tank": {
+            "start_gal": r.inp.start_gal,
+            "mpg": r.inp.mpg,
+            "planning_mpg": round(r.inp.planning_mpg, 2),
+            "calibrating": r.inp.calibrating,
+            "capacity_gal": r.inp.capacity_gal,
+        },
+        "home_price_per_gal": round(r.inp.end_value_per_gal, 3),
+        "options": [_plan_json(p, r.route.total_mi, rt) for p in r.options],
+        "naive": _plan_json(r.naive, r.route.total_mi, rt),
+        "unpriced": [{"name": u.name, "where": u.where, "mile": round(u.mile)} for u in r.unpriced],
+        "weather": {
+            "points": [
+                {
+                    "mile": round(p.mile, 1),
+                    "lat": round(p.lat, 5),
+                    "lon": round(p.lon, 5),
+                    "offset_s": round(p.offset_s),
+                    "leg": p.leg,
+                    "series": p.series,
+                }
+                for p in r.points
+            ],
+            "series": [
+                {
+                    "start": _iso(h.times[0]) if h.times else None,
+                    "elevation_m": h.elevation_m,
+                    "temp_c": _r1(h.temp_c),
+                    "precip_prob_pct": [round(v) for v in h.precip_prob_pct],
+                    "precip_mm": _r1(h.precip_mm),
+                    "snow_cm": _r1(h.snow_cm),
+                    "wind_mph": [round(v) for v in h.wind_mph],
+                    "gust_mph": [round(v) for v in h.gust_mph],
+                    "code": h.code,
+                }
+                for h in r.hourly
+            ],
+            "classify": CLASSIFY,
+            "labels": WMO_LABELS,
+        },
+        "alerts": [
+            {
+                "event": a.event,
+                "severity": a.severity,
+                "headline": a.headline,
+                "area": a.area,
+                "onset": _iso(a.onset),
+                "ends": _iso(a.ends),
+            }
+            for a in r.alerts
+        ],
+        "warnings": list(r.warnings),
+    }
+
+
+def _num(v: object, name: str) -> float:
+    try:
+        return float(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as e:
+        raise TripError(f"{name} must be a number") from e
+
+
+def request_from_json(d: dict[str, Any]) -> TripRequest:
+    """Validate the planner page's form."""
+    origin = str(d.get("origin") or "").strip()
+    dest = str(d.get("destination") or "").strip()
+    if not origin or not dest:
+        raise TripError("give a start and a destination")
+
+    def when(key: str) -> datetime | None:
+        v = d.get(key)
+        if not v:
+            return None
+        try:
+            t = datetime.fromisoformat(str(v))
+        except ValueError as e:
+            raise TripError(f"{key} must be an ISO date and time") from e
+        if t.tzinfo is None:
+            raise TripError(f"{key} needs a time zone offset")
+        return t
+
+    reserves = tuple(_num(x, "reserve") for x in (d.get("reserves") or DEFAULT_RESERVES))
+    if not reserves or any(r < 0 for r in reserves):
+        raise TripError("reserves must be zero or more miles")
+    discounts = d.get("discounts")
+    return TripRequest(
+        origin=origin,
+        destination=dest,
+        via=tuple(str(v).strip() for v in (d.get("via") or []) if str(v).strip()),
+        round_trip=bool(d.get("round_trip")),
+        local_mi=_num(d.get("local_mi", 20.0), "local_mi"),
+        depart=when("depart"),
+        return_depart=when("return_depart"),
+        reserves=reserves,
+        discounts=(
+            {str(k): _num(v, "discount") for k, v in discounts.items()}
+            if isinstance(discounts, dict)
+            else dict(OPEN_ROADS_DEFAULT)
+        ),
+        tank_gal=_num(d["tank_gal"], "tank_gal") if d.get("tank_gal") not in (None, "") else None,
+        mpg=_num(d["mpg"], "mpg") if d.get("mpg") not in (None, "") else None,
+    )

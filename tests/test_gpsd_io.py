@@ -47,3 +47,10 @@ async def test_keeps_retrying_without_gpsd() -> None:
     with contextlib.suppress(TimeoutError):
         await asyncio.wait_for(anext(fixes), 0.2)
     await fixes.aclose()
+
+
+async def test_current_fix_times_out_without_gpsd() -> None:
+    from bigair.gpsd_io import current_fix
+
+    # Nothing listens on this port: no fix within the timeout.
+    assert await current_fix("127.0.0.1", 1, timeout_s=0.2) is None

@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trip Planner</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #1c1f24; --muted: #667085; --line: #e3e6ea;
+    --accent: #2563eb; --warn-bg: #fff6e0; --warn-ink: #7a5200; --err-bg: #fde8e8; --err-ink: #9b1c1c;
+    --clear: #2f9e63; --wet: #2f7de1; --snow: #9b5de5; --severe: #e0413a; --unknown: #9aa1ab;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121418; --card: #1b1e24; --ink: #e8eaed; --muted: #9aa1ab; --line: #2c3038;
+      --accent: #6aa0ff; --warn-bg: #3a2f12; --warn-ink: #f3d27a; --err-bg: #3d1b1b; --err-ink: #f5a3a3;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 12px 16px 40px; }
+  h1 { font-size: 20px; margin: 4px 0 12px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  h1 small { font-size: 13px; color: var(--muted); font-weight: normal; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  input[type=text], input[type=datetime-local] {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font-size: 16px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .inline { display: flex; gap: 6px; }
+  .inline input { flex: 1; }
+  button { padding: 9px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card);
+           color: var(--ink); font-size: 15px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .chip { padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); font-size: 13px; cursor: pointer; }
+  .chip.on { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .status { color: var(--muted); font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .banner { padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; font-size: 14px; }
+  .warn { background: var(--warn-bg); color: var(--warn-ink); }
+  .err { background: var(--err-bg); color: var(--err-ink); }
+  #map { height: 58vh; min-height: 320px; border-radius: 12px; border: 1px solid var(--line); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .note { font-size: 12px; color: var(--muted); }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .wx { background: var(--card); color: var(--ink); border: 2px solid var(--unknown); border-radius: 10px;
+        padding: 1px 5px; font-size: 12px; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+  .stop { background: var(--accent); color: #fff; border: 2px solid #fff; border-radius: 50%;
+          width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+          font-weight: 700; font-size: 13px; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  input[type=range] { width: 100%; }
+  .hidden { display: none; }
+  .scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Trip planner <small id="tankline"></small></h1>
+
+  <form class="card" id="form">
+    <div class="grid">
+      <div>
+        <label for="origin">From</label>
+        <div class="inline">
+          <input type="text" id="origin" placeholder="Seattle, WA" required autocomplete="off">
+          <button type="button" id="here" title="Use the van's GPS position">📍 Here</button>
+        </div>
+      </div>
+      <div>
+        <label for="destination">To</label>
+        <input type="text" id="destination" placeholder="Sonoma Raceway, CA" required autocomplete="off">
+      </div>
+      <div>
+        <label for="via">Via (optional, separate with ;)</label>
+        <input type="text" id="via" placeholder="Bend, OR" autocomplete="off">
+      </div>
+      <div>
+        <label for="reserves">Reserve depths to compare (miles)</label>
+        <input type="text" id="reserves" value="150,100,75,50" autocomplete="off">
+      </div>
+      <div>
+        <label for="depart">Leave</label>
+        <input type="datetime-local" id="depart">
+      </div>
+      <div id="returnbox" class="hidden">
+        <label for="return_depart">Leave for home</label>
+        <input type="datetime-local" id="return_depart">
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="row" style="margin:0;color:var(--ink);font-size:15px">
+        <input type="checkbox" id="round_trip"> Round trip (same road home)
+      </label>
+      <span style="flex:1"></span>
+      <button class="primary" id="go" type="submit">Plan trip</button>
+    </div>
+    <div class="status" id="status"></div>
+  </form>
+
+  <div id="results" class="hidden">
+    <div id="banners"></div>
+
+    <div class="card">
+      <h2>Fuel stops by reserve depth</h2>
+      <div class="chips" id="options"></div>
+      <div class="scroll"><table id="stops"></table></div>
+      <div class="note" id="optnote"></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <h2 style="margin:0">Weather on the way</h2>
+        <div class="chips" id="legs" style="margin:0"></div>
+      </div>
+      <div id="map"></div>
+      <div class="legend">
+        <span><span class="dot" style="background:var(--clear)"></span>Clear</span>
+        <span><span class="dot" style="background:var(--wet)"></span>Rain</span>
+        <span><span class="dot" style="background:var(--snow)"></span>Snow / ice</span>
+        <span><span class="dot" style="background:var(--severe)"></span>Severe</span>
+        <span><span class="dot" style="background:var(--unknown)"></span>Beyond forecast</span>
+      </div>
+      <div style="margin-top:10px">
+        <label for="shift">Leave <b id="shiftlabel"></b> <span class="muted" id="shiftdelta"></span></label>
+        <input type="range" id="shift" min="-12" max="72" step="1" value="0">
+        <div class="note">Slide to see the weather for another departure time. Fuel prices aren't re-planned.</div>
+      </div>
+    </div>
+
+    <div class="card" id="alertcard">
+      <h2>Weather alerts on the route</h2>
+      <div id="alerts"></div>
+    </div>
+
+    <div class="card">
+      <h2>Along the way</h2>
+      <div class="scroll"><table id="timeline"></table></div>
+    </div>
+
+    <div class="card" id="unpricedcard">
+      <h2>Open Roads stations without a price</h2>
+      <div class="note" style="margin-bottom:6px">Google has no price for these. Check the TSD Open Roads app; a member price below the plan's stop nearby may be worth the stop.</div>
+      <div id="unpriced"></div>
+    </div>
+
+    <div class="note" id="footer"></div>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const COLORS = () => {
+  const cs = getComputedStyle(document.documentElement);
+  return Object.fromEntries(["clear","wet","snow","severe","unknown"].map((k) => [k, cs.getPropertyValue("--" + k).trim()]));
+};
+const EMOJI = { clear: "☀️", wet: "🌧️", snow: "❄️", severe: "⚠️", unknown: "·" };
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
+
+let plan = null, optIdx = 0, leg = "out", map = null, layer = null, routeGeo = null;
+
+// ---------- form ----------
+const FIELDS = ["origin", "destination", "via", "reserves"];
+function loadForm() {
+  try {
+    const f = JSON.parse(store.get("planner.form") || "{}");
+    FIELDS.forEach((k) => { if (f[k] != null) $(k).value = f[k]; });
+    $("round_trip").checked = !!f.round_trip;
+  } catch { /* ignore */ }
+  toggleReturn();
+}
+function saveForm() {
+  const f = Object.fromEntries(FIELDS.map((k) => [k, $(k).value]));
+  f.round_trip = $("round_trip").checked;
+  store.set("planner.form", JSON.stringify(f));
+}
+function toggleReturn() { $("returnbox").classList.toggle("hidden", !$("round_trip").checked); }
+function localIso(v) { return v ? new Date(v).toISOString() : null; }
+function toLocalInput(d) {
+  const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return z.toISOString().slice(0, 16);
+}
+
+$("round_trip").addEventListener("change", toggleReturn);
+$("here").addEventListener("click", () => { $("origin").value = "here"; });
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  saveForm();
+  const body = {
+    origin: $("origin").value, destination: $("destination").value,
+    via: $("via").value.split(";").map((s) => s.trim()).filter(Boolean),
+    round_trip: $("round_trip").checked,
+    depart: localIso($("depart").value), return_depart: $("round_trip").checked ? localIso($("return_depart").value) : null,
+    reserves: $("reserves").value.split(",").map((s) => s.trim()).filter(Boolean),
+  };
+  $("go").disabled = true;
+  $("status").textContent = "Planning… this takes about 15 seconds.";
+  try {
+    const r = await fetch("api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    $("status").textContent = "";
+    render(j);
+  } catch (e) {
+    $("status").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
+  } finally {
+    $("go").disabled = false;
+  }
+});
+
+// ---------- geometry ----------
+function decodePolyline(s) {
+  const pts = []; let i = 0, lat = 0, lon = 0;
+  while (i < s.length) {
+    for (const which of [0, 1]) {
+      let shift = 0, result = 0, b;
+      do { b = s.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      const d = (result & 1) ? ~(result >> 1) : (result >> 1);
+      if (which === 0) lat += d; else lon += d;
+    }
+    pts.push([lat / 1e5, lon / 1e5]);
+  }
+  return pts;
+}
+function hav(a, b) {
+  const R = 3958.76, r = Math.PI / 180;
+  const dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r;
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function buildGeo(p) {
+  const pts = decodePolyline(p.route.polyline);
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + hav(pts[i - 1], pts[i]));
+  const k = cum[cum.length - 1] ? p.route.one_way_mi / cum[cum.length - 1] : 1;
+  return { pts, cum: cum.map((c) => c * k) };
+}
+// Outbound road mile for any trip mile (the return leg runs the same road backwards).
+function roadMile(p, mile) {
+  const out = p.route.one_way_mi;
+  return mile <= out ? mile : Math.max(0, 2 * out + p.request.local_mi - mile);
+}
+function slice(a, b) {
+  const lo = Math.min(a, b), hi = Math.max(a, b), out = [];
+  const { pts, cum } = routeGeo;
+  for (let i = 0; i < pts.length; i++) {
+    if (cum[i] >= lo && cum[i] <= hi) out.push(pts[i]);
+  }
+  return out;
+}
+
+// ---------- weather ----------
+function cond(series, when) {
+  if (!series || !series.start) return null;
+  const i = Math.round((when - new Date(series.start)) / 3600000);
+  if (i < 0 || i >= series.temp_c.length) return null;
+  return { temp_c: series.temp_c[i], prob: series.precip_prob_pct[i], precip: series.precip_mm[i],
+           snow: series.snow_cm[i], wind: series.wind_mph[i], gust: series.gust_mph[i], code: series.code[i] };
+}
+function classify(c, K) {
+  if (!c) return "unknown";
+  if (K.severe_codes.includes(c.code) || c.gust >= K.severe_gust_mph) return "severe";
+  const wet = c.precip >= K.wet_precip_mm || c.prob >= K.wet_prob_pct || K.wet_codes.includes(c.code);
+  if (c.snow > 0 || K.snow_codes.includes(c.code)) return "snow";
+  if (wet && c.temp_c <= K.ice_temp_c) return "snow";
+  return wet ? "wet" : "clear";
+}
+const f = (c) => Math.round(c * 9 / 5 + 32);
+const fmtTime = (d) => d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+const money = (x) => "$" + Number(x).toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+function legStart(p, which) {
+  const base = new Date(which === "back" && p.return_depart ? p.return_depart : p.depart);
+  return new Date(base.getTime() + Number($("shift").value) * 3600000);
+}
+
+// ---------- render ----------
+function render(p) {
+  plan = p; optIdx = Math.min(optIdx, p.options.length - 1);
+  // Fill an empty form from the plan, so "plan again" is one tap.
+  if (!$("origin").value) $("origin").value = p.request.origin;
+  if (!$("destination").value) $("destination").value = p.request.destination;
+  if (!$("via").value && p.request.via.length) $("via").value = p.request.via.join("; ");
+  if (!store.get("planner.form")) { $("round_trip").checked = p.request.round_trip; toggleReturn(); }
+  if (!p.request.round_trip) leg = "out";
+  $("results").classList.remove("hidden");
+  $("shift").value = 0;
+  routeGeo = buildGeo(p);
+  if (map) map._fitted = false;
+
+  const t = p.tank;
+  $("tankline").textContent = `${t.start_gal.toFixed(1)} / ${t.capacity_gal} gal · ${t.planning_mpg} mpg` +
+    (t.calibrating ? " · calibrating" : "");
+
+  const banners = [];
+  const age = (Date.now() - new Date(p.generated_at)) / 3600000;
+  if (age > 6) banners.push(`<div class="banner warn">This plan is ${Math.round(age)} h old. Prices and weather may have changed; plan again when you have signal.</div>`);
+  if (t.calibrating) banners.push('<div class="banner warn">The tank is still calibrating, so plans use a lower mpg (×0.93).</div>');
+  (p.warnings || []).forEach((w) => banners.push(`<div class="banner warn">${esc(w)}</div>`));
+  $("banners").innerHTML = banners.join("");
+
+  $("legs").innerHTML = p.request.round_trip
+    ? ["out", "back"].map((l) => `<span class="chip ${l === leg ? "on" : ""}" data-leg="${l}">${l === "out" ? "Going" : "Coming home"}</span>`).join("")
+    : "";
+  $("legs").querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => { leg = c.dataset.leg; render(plan); }));
+
+  renderOptions();
+  renderAlerts();
+  $("unpricedcard").classList.toggle("hidden", !p.unpriced.length);
+  $("unpriced").innerHTML = p.unpriced.map((u) => `<div>${esc(u.name)}${u.where ? ", " + esc(u.where) : ""} <span class="muted">· mi ${roadMile(p, u.mile).toFixed(0)}</span></div>`).join("");
+  $("footer").textContent = `Planned ${new Date(p.generated_at).toLocaleString()} · ${p.trip_mi.toLocaleString()} mi · ` +
+    `leftover fuel valued at $${p.home_price_per_gal.toFixed(2)}/gal · prices: Google · weather: Open-Meteo · alerts: NWS`;
+  drawMap();
+}
+
+function renderOptions() {
+  const p = plan;
+  const ref = p.options.find((o) => o.feasible);
+  $("options").innerHTML = p.options.map((o, i) => {
+    const label = o.feasible ? `${o.reserve_mi} mi · ${money(o.net_cost_usd)}` : `${o.reserve_mi} mi · no plan`;
+    return `<span class="chip ${i === optIdx ? "on" : ""}" data-i="${i}">${label}</span>`;
+  }).join("");
+  $("options").querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => { optIdx = Number(c.dataset.i); renderOptions(); drawMap(); }));
+  const o = p.options[optIdx];
+  if (!o.feasible) {
+    $("stops").innerHTML = `<tr><td class="banner err">${esc(o.reason)}</td></tr>`;
+    $("optnote").textContent = "";
+    return;
+  }
+  const rows = o.stops.map((s, i) => `<tr><td><b>${i + 1}</b></td><td>${esc(s.name)}<div class="note">${esc(s.note)}</div></td>
+    <td class="num">mi ${s.mile.toFixed(0)}</td><td class="num">${s.arrive_gal.toFixed(1)} → ${(s.arrive_gal + s.buy_gal).toFixed(1)} gal</td>
+    <td class="num">${s.buy_gal.toFixed(1)} @ $${s.price_per_gal.toFixed(2)}</td><td class="num">${money(s.cost_usd)}</td></tr>`).join("");
+  $("stops").innerHTML = `<tr><th></th><th>Stop</th><th class="num">Where</th><th class="num">Tank</th><th class="num">Buy</th><th class="num">Cost</th></tr>${rows}`;
+  const saves = ref && o !== ref ? ` Saves ${money(ref.net_cost_usd - o.net_cost_usd)} vs the ${ref.reserve_mi} mi reserve.` : "";
+  const naive = p.naive.feasible ? ` Filling at ¼ tank would cost ${money(p.naive.net_cost_usd)}.` : "";
+  $("optnote").textContent = `Lowest point ${o.min_gal.toFixed(1)} gal (~${Math.round(o.min_gal * p.tank.planning_mpg)} mi). ` +
+    `Arrive with ${o.end_gal.toFixed(1)} gal. Net ${money(o.net_cost_usd)} (fuel ${money(o.fuel_cost_usd)}, less fuel left over).${saves}${naive}`;
+}
+
+function renderAlerts() {
+  const a = plan.alerts || [];
+  $("alertcard").classList.toggle("hidden", !a.length);
+  const short = (t) => (t.length > 90 ? t.slice(0, 88) + "…" : t);
+  $("alerts").innerHTML = a.map((x) => `<div class="banner ${/Extreme|Severe/.test(x.severity) ? "err" : "warn"}" title="${esc(x.area)}"><b>${esc(x.event)}</b> · ${esc(short(x.area))}
+    <div class="note">${x.onset ? fmtTime(new Date(x.onset)) : ""}${x.ends ? " – " + fmtTime(new Date(x.ends)) : ""}</div></div>`).join("");
+}
+
+function drawMap() {
+  const p = plan, K = p.weather.classify, C = COLORS();
+  const hasMap = typeof L !== "undefined";  // the map library and tiles need internet
+  if (!hasMap) {
+    $("map").innerHTML = '<div class="banner warn" style="margin:8px">The map needs internet. The stops and weather below still work.</div>';
+    $("map").style.height = "auto";
+    $("map").style.minHeight = "0";
+  } else if (!map) {
+    map = L.map("map", { zoomControl: true, scrollWheelZoom: false });  // page scroll stays page scroll
+    // Re-measure whenever the box changes size (the form above can reflow).
+    if (window.ResizeObserver) new ResizeObserver(() => map.invalidateSize()).observe($("map"));
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+  }
+  if (layer) layer.remove();
+  layer = hasMap ? L.layerGroup().addTo(map) : null;
+
+  const start = legStart(p, leg);
+  $("shiftlabel").textContent = fmtTime(start);
+  const sh = Number($("shift").value);
+  $("shiftdelta").textContent = sh ? `(${sh > 0 ? "+" : ""}${sh} h)` : "(as planned)";
+
+  const pts = p.weather.points.filter((w) => w.leg === leg).sort((a, b) => a.offset_s - b.offset_s);
+  const rows = [];
+  // Base route in grey, then coloured stretches between weather points.
+  if (layer) L.polyline(routeGeo.pts, { color: C.unknown, weight: 5, opacity: .5 }).addTo(layer);
+  const classes = pts.map((w) => {
+    const when = new Date(start.getTime() + w.offset_s * 1000);
+    const c = cond(p.weather.series[w.series], when);
+    return { w, when, c, cls: classify(c, K) };
+  });
+  const rank = { unknown: -1, clear: 0, wet: 1, snow: 2, severe: 3 };
+  for (let i = 0; i + 1 < classes.length; i++) {
+    const a = classes[i], b = classes[i + 1];
+    const worst = rank[a.cls] >= rank[b.cls] ? a.cls : b.cls;
+    const line = slice(roadMile(p, a.w.mile), roadMile(p, b.w.mile));
+    if (layer && line.length > 1) L.polyline(line, { color: C[worst], weight: 6, opacity: .9 }).addTo(layer);
+  }
+  classes.forEach(({ w, when, c, cls }, i) => {
+    const label = c ? `${EMOJI[cls]} ${f(c.temp_c)}°` : "?";
+    const icon = layer && L.divIcon({ className: "", html: `<div class="wx" style="border-color:${C[cls]}">${label}</div>`, iconSize: null });
+    const name = c ? (p.weather.labels[String(c.code)] || "—") : "Beyond the forecast";
+    const pop = `<b>${fmtTime(when)}</b> · mi ${w.mile.toFixed(0)}<br>${esc(name)}` +
+      (c ? `<br>${f(c.temp_c)}°F · ${Math.round(c.prob)}% precip · wind ${Math.round(c.wind)} (gust ${Math.round(c.gust)}) mph` +
+           (c.snow > 0 ? `<br>snow ${(c.snow / 2.54).toFixed(1)} in/h` : "") : "");
+    // A label about every 75 mi, plus every snowy or severe spot.
+    if (layer && (i % 3 === 0 || i === classes.length - 1 || cls === "snow" || cls === "severe")) L.marker([w.lat, w.lon], { icon }).bindPopup(pop).addTo(layer);
+    rows.push(`<tr><td>${fmtTime(when)}</td><td class="num">${w.mile.toFixed(0)}</td>
+      <td><span class="dot" style="background:${C[cls]}"></span>${esc(name)}</td>
+      <td class="num">${c ? f(c.temp_c) + "°" : ""}</td><td class="num">${c ? Math.round(c.prob) + "%" : ""}</td>
+      <td class="num">${c ? Math.round(c.wind) + "/" + Math.round(c.gust) : ""}</td></tr>`);
+  });
+  $("timeline").innerHTML = pts.length
+    ? `<tr><th>When</th><th class="num">Mile</th><th>Weather</th><th class="num">Temp</th><th class="num">Precip</th><th class="num">Wind/gust mph</th></tr>${rows.join("")}`
+    : `<tr><td class="muted">No weather for this plan.</td></tr>`;
+
+  const o = p.options[optIdx];
+  if (!layer) return;
+  if (o && o.feasible) {
+    o.stops.forEach((s, i) => {
+      if (s.lat == null || (p.request.round_trip && s.leg !== leg)) return;
+      const icon = L.divIcon({ className: "", html: `<div class="stop">${i + 1}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+      L.marker([s.lat, s.lon], { icon, zIndexOffset: 1000 })
+        .bindPopup(`<b>${i + 1}. ${esc(s.name)}</b><br>buy ${s.buy_gal.toFixed(1)} gal @ $${s.price_per_gal.toFixed(2)}<br><span class="note">${esc(s.note)}</span>`)
+        .addTo(layer);
+    });
+  }
+  if (!map._fitted) {
+    map._fitted = true;
+    // Fit after layout settles, or Leaflet fits to a stale size.
+    requestAnimationFrame(() => setTimeout(() => {
+      map.invalidateSize();
+      map.fitBounds(L.latLngBounds(routeGeo.pts), { padding: [20, 20] });
+    }, 50));
+  }
+}
+
+$("shift").addEventListener("input", () => { if (plan) drawMap(); });
+
+// ---------- start ----------
+loadForm();
+const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
+$("depart").value = toLocalInput(d);
+fetch("api/plan/last").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) render(j); }).catch(() => {});
+</script>
+</body>
+</html>

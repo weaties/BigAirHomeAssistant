@@ -247,7 +247,9 @@ def test_trip_without_home_price_uses_median_near_the_end() -> None:
 def test_trip_round_trips_through_dict() -> None:
     from bigair.fuel_plan import trip_from_dict, trip_to_dict
 
-    s = Station("Love's, CA", 640.0, 6.49, 0.4, 0.8, True, "Open Roads −$0.30; 3 h old")
+    s = Station(
+        "Love's, CA", 640.0, 6.49, 0.4, 0.8, True, "Open Roads −$0.30; 3 h old", 39.9, -122.2
+    )
     assert trip_from_dict(trip_to_dict(780.0, (s,), 6.89)) == (780.0, (s,), 6.89)
 
 
