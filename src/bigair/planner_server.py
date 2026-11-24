@@ -65,7 +65,9 @@ def make_server(
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
-            logger.debug("planner http: " + fmt, *args)
+            # http.server passes %-style args; loguru formats with {}, so
+            # interpolate here or the line logs the raw "%s" placeholders.
+            logger.debug("planner http {} {}", self.address_string(), fmt % args)
 
         def _send(self, code: int, body: bytes, ctype: str) -> None:
             self.send_response(code)
