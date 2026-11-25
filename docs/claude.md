@@ -8,6 +8,22 @@ few sentences, and if a clearly better choice exists among your POIs, it
 the form and plans it in slow or quick mode) and **Dismiss**. Nothing changes
 until you accept.
 
+## Ask Claude (chat, #93)
+
+The **Ask Claude** card sits above the plan, so you can use it before planning
+anything. It also shows in the Companion app through the HA Trip view, which
+embeds this page. Ask in plain words: "somewhere quiet with water and shade
+within 150 mi, dog-friendly?". Claude looks things up with the same tools, plus
+`find_destinations` (your 3-night POIs, iOverlander campsites and public land,
+in a straight line, with no Google calls). It answers and can suggest a route,
+which shows up under the chat with Accept & plan / Dismiss.
+
+The conversation lives only on that phone (session storage) and is sent with
+each question. The server keeps none of it. **New chat** clears it. A chat holds
+up to 24 messages, and older ones drop off. HA Assist and voice aren't covered:
+HA's built-in Claude integration can only reach HA entities, so that would need
+a custom integration.
+
 ## Set up
 
 1. Create an API key at console.anthropic.com. **Set a monthly spend limit there
@@ -25,6 +41,7 @@ Without a key, the card says "not set up" and everything else works.
 | `where_is_the_van` | GPS position |
 | `find_pois`, `poi_details` | your POI notes (fields and note text) |
 | `last_plan` | the plan on the page: route, day budget, POIs and scores, proposed stops |
+| `find_destinations` | 3-night spots: your POIs, iOverlander, public land (free, straight line) |
 | `weather_at` | Open-Meteo forecast at a point and time |
 | `propose_route` | records a suggestion; the only tool that "writes" |
 

@@ -38,8 +38,38 @@ EXPLAIN = (
 )
 
 
+MAX_CHAT_MESSAGES = 24
+MAX_CHAT_CHARS = 4000
+
+
 class ClaudeOffline(RuntimeError):
     """The API couldn't be reached (no internet, timeout)."""
+
+
+def chat_messages_from_json(raw: object) -> list[dict[str, Any]]:
+    """The page's conversation → API messages. The phone keeps the conversation; the
+    server keeps none. Text only, alternating user/assistant, starting and ending
+    with the user, bounded in length. Raises ValueError otherwise."""
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("messages must be a non-empty list")
+    if len(raw) > MAX_CHAT_MESSAGES:
+        raise ValueError(f"at most {MAX_CHAT_MESSAGES} messages; start a new chat")
+    out: list[dict[str, Any]] = []
+    for i, m in enumerate(raw):
+        if not isinstance(m, dict):
+            raise ValueError("each message must be an object")
+        role, text = m.get("role"), m.get("text")
+        want = "user" if i % 2 == 0 else "assistant"
+        if role != want:
+            raise ValueError(f"message {i + 1} must be from the {want}")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"message {i + 1} is empty")
+        if len(text) > MAX_CHAT_CHARS:
+            raise ValueError(f"message {i + 1} is too long")
+        out.append({"role": role, "content": text.strip()})
+    if out[-1]["role"] != "user":
+        raise ValueError("the last message must be from the user")
+    return out
 
 
 class ClaudeService:
@@ -90,10 +120,24 @@ class ClaudeService:
 
     def explain(self) -> dict[str, Any]:
         if self.send is None:
-            msg = "Claude isn't set up (no ANTHROPIC_API_KEY on the Pi)."
-            return {"text": msg, "stop": "disabled", "proposals": []}
+            return self._disabled()
         if self.deps.last_plan() is None:
             return {"text": "Plan a route first.", "stop": "no_plan", "proposals": []}
+        return self._ask([{"role": "user", "content": EXPLAIN}], "explain")
+
+    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Answer the last user message of a conversation (#93)."""
+        if self.send is None:
+            return self._disabled()
+        return self._ask(messages, "chat")
+
+    @staticmethod
+    def _disabled() -> dict[str, Any]:
+        msg = "Claude isn't set up (no ANTHROPIC_API_KEY on the Pi)."
+        return {"text": msg, "stop": "disabled", "proposals": []}
+
+    def _ask(self, messages: list[dict[str, Any]], what: str) -> dict[str, Any]:
+        assert self.send is not None
         with self.lock:
             led = self._ledger()
             ctx = AgentContext(self.now())
@@ -102,7 +146,7 @@ class ClaudeService:
                     self.send,
                     system_prompt(self.rules),
                     build_tools(self.deps),
-                    [{"role": "user", "content": EXPLAIN}],
+                    messages,
                     led,
                     ctx,
                 )
@@ -117,7 +161,7 @@ class ClaudeService:
                 stored = self._all_proposals() + props
                 write_state(self.proposals_path, {"proposals": stored}, durable=False)
             logger.info(
-                "Claude explain: {} tools, ${:.3f}, stop {}", len(r.tool_calls), r.cost_usd, r.stop
+                "Claude {}: {} tools, ${:.3f}, stop {}", what, len(r.tool_calls), r.cost_usd, r.stop
             )
             return {
                 "text": r.text,
