@@ -109,6 +109,40 @@ weather tables still work.
 The command line runs the same plan, weather included:
 `bigair fuel-plan --from … --to … --round-trip --live --depart … --return-depart …`.
 
+### Points of interest near the route (#88)
+
+With POIs synced to the Pi ([syncthing-poi.md](hardware/syncthing-poi.md)), the
+page adds a **Points of interest near the route** card and orange squares on the
+map. The **Show POIs** selector sets how far to look:
+
+- **within a round-trip detour of N hours**: driving from the route to the POI
+  and back takes at most N hours (the default is 3);
+- **within a drive (each way) of N hours**: the POI is at most N hours from the
+  route;
+- **coming up in the next N hours**: the turn-off is in the first N hours of the
+  route, and the POI is at most 90 min off it.
+
+**Update** re-runs the search on the cached route without a new plan. Each POI
+shows where it leaves the route, the detour and the visit time from its note
+(`visit_min`). You can change the visit time on the page, and it's remembered
+on that device. Tick POIs to see detour + visit time added, then **Add selected
+as via & re-plan**.
+
+How it works (`poi_near.py`): a straight-line prefilter at 70 mph rules out POIs
+that can't be in reach, without asking Google. The rest get exact drive times
+from Google Routes (duration only), nearest first, at most 25 per search, and
+are cached while the planner runs. The detour is twice the one-way drive from
+the nearest point on the route, which errs long (the safe side for a 3pm
+arrival). The planner never fills in a number it doesn't know:
+
+- POIs past the cap show **not checked**;
+- failed lookups show **unknown**;
+- a missing visit time shows **?**.
+
+None of these are counted in the totals. POIs are only matched to the outbound
+route. The list is ordered by detour, then rating, then season. Proper scenic
+scoring comes in #90.
+
 ## Trip file
 
 Real trips stay out of git, because this repo is public. Keep them on the Pi

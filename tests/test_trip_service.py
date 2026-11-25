@@ -9,11 +9,14 @@ from typing import Any
 import pytest
 
 from bigair.fuel_sources import LiveFuel, encode_polyline
+from bigair.poi import Poi
+from bigair.poi_near import Reach
 from bigair.trip_service import (
     TripEdges,
     TripError,
     TripRequest,
     plan_trip,
+    pois_for_cached,
     request_from_json,
     result_to_json,
     weather_summary,
@@ -216,3 +219,78 @@ def test_request_from_json_validates() -> None:
         request_from_json({"origin": "A", "destination": "B", "depart": "2026-11-28T08:00"})
     with pytest.raises(TripError, match="number"):
         request_from_json({"origin": "A", "destination": "B", "reserves": ["x"]})
+
+
+# --- POIs near the route (#88) ---------------------------------------------------
+
+# The fake route runs due north along lon -120 from lat 40.0 to 42.0.
+NEAR = Poi("Near Springs", 41.0, -120.2, ("hot-springs",), "Warm.", 120, "Soak", (11, 12), True, 5)
+FAR = Poi("Far Peak", 41.0, -124.0, ("geology",), None)
+
+
+def _drive(origin: tuple[float, float], dest: tuple[float, float]) -> float:
+    return 20 * 60.0
+
+
+def _poi_edges(**over: object) -> TripEdges:
+    base: dict[str, object] = {"pois": lambda: ([NEAR, FAR], []), "drive_s": _drive}
+    base.update(over)
+    return _edges(**base)
+
+
+def test_plan_lists_pois_in_reach_with_detour_and_visit() -> None:
+    r = plan_trip(TripRequest("A", "B", reach=Reach("detour", 3.0)), _poi_edges())
+    assert r.pois_enabled
+    assert [h.poi.name for h in r.pois] == ["Near Springs"]
+    j = result_to_json(r)
+    json.dumps(j)
+    block = j["pois"]
+    assert block["enabled"] is True
+    assert block["reach"] == {"mode": "detour", "hours": 3.0}
+    hit = block["hits"][0]
+    assert hit["name"] == "Near Springs"
+    assert hit["detour_min"] == 40
+    assert hit["visit_min"] == 120
+    assert hit["visit_what"] == "Soak"
+    assert hit["status"] == "ok"
+    assert hit["in_season"] is True  # November
+    assert hit["rating"] == 5
+    assert hit["destination"] is True
+    assert hit["lat"] == 41.0
+    assert hit["eta"]
+
+
+def test_without_a_poi_folder_the_plan_has_no_poi_section() -> None:
+    r = plan_trip(TripRequest("A", "B"), _edges())
+    assert not r.pois_enabled
+    assert result_to_json(r)["pois"]["enabled"] is False
+
+
+def test_poi_folder_warnings_reach_the_plan() -> None:
+    edges = _poi_edges(pois=lambda: ([], ["POI folder /poi not found; is Syncthing running?"]))
+    r = plan_trip(TripRequest("A", "B"), edges)
+    assert r.options[0].feasible  # the fuel plan stands without POIs
+    assert "POI folder /poi not found; is Syncthing running?" in r.warnings
+
+
+def test_request_from_json_reads_the_reach_selector() -> None:
+    req = request_from_json(
+        {"origin": "A", "destination": "B", "reach": {"mode": "each_way", "hours": "2"}}
+    )
+    assert req.reach == Reach("each_way", 2.0)
+    assert request_from_json({"origin": "A", "destination": "B"}).reach == Reach("detour", 3.0)
+    with pytest.raises(TripError, match="reach"):
+        request_from_json({"origin": "A", "destination": "B", "reach": {"mode": "fly"}})
+
+
+def test_changing_the_reach_reuses_the_cached_route_without_replanning() -> None:
+    edges = _poi_edges()
+    last = result_to_json(plan_trip(TripRequest("A", "B", reach=Reach("detour", 0.5)), edges))
+    assert last["pois"]["hits"] == []  # 40 min round trip > 30 min
+
+    def no_route(*a: object) -> dict[str, Any]:
+        raise AssertionError("must not re-route")
+
+    block = pois_for_cached(last, Reach("detour", 1.0), _poi_edges(route=no_route))
+    assert [h["name"] for h in block["hits"]] == ["Near Springs"]
+    assert block["reach"] == {"mode": "detour", "hours": 1.0}

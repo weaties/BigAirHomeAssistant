@@ -1,7 +1,8 @@
 """Edge: Google Routes API and Places API (New) over HTTPS (#71).
 
 Two calls, both POST with the key and a field mask in headers:
-- ``computeRoutes``: origin, destination, optional intermediates → one route
+- ``computeRoutes``: origin, destination, optional intermediates → one route.
+  Also used duration-only for POI detour times (#88), the Essentials SKU.
 - ``places:searchText`` with ``searchAlongRouteParameters``: diesel stations
   along one stretch, with ``fuelOptions`` and ``routingSummaries``. This is the
   Text Search Enterprise + Atmosphere SKU, so a long trip costs tens of requests.
@@ -77,6 +78,20 @@ def compute_route(key: str, origin: str, destination: str, via: list[str]) -> di
     if via:
         body["intermediates"] = [waypoint(v) for v in via]
     return _post(ROUTES_URL, key, ROUTE_FIELDS, body)
+
+
+def drive_seconds(key: str, origin: tuple[float, float], dest: tuple[float, float]) -> float:
+    """Driving time between two points, for a POI detour (#88)."""
+    body: dict[str, Any] = {
+        "origin": waypoint(f"{origin[0]},{origin[1]}"),
+        "destination": waypoint(f"{dest[0]},{dest[1]}"),
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_UNAWARE",
+    }
+    routes = _post(ROUTES_URL, key, "routes.duration", body).get("routes") or []
+    if not routes:
+        raise ValueError("no route to the POI")
+    return float(str(routes[0].get("duration", "0s")).rstrip("s"))
 
 
 def search_along(

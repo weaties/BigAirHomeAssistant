@@ -193,6 +193,7 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
     from bigair.gpsd_io import current_fix
     from bigair.ha_discovery import FUEL_STATE_TOPIC
     from bigair.mqtt_io import read_retained
+    from bigair.poi import load_pois
     from bigair.trip_service import TripEdges, TripError
 
     key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
@@ -208,6 +209,10 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
         fix = asyncio.run(current_fix()) if gpsd else None
         return (fix.lat, fix.lon) if fix else None
 
+    # POIs from the vault (#88): the Syncthing folder, mounted read-only.
+    poi_dir = os.environ.get("POI_DIR", "")
+    pois = (lambda: load_pois(Path(poi_dir))) if poi_dir else None
+
     return TripEdges(
         route=lambda o, d, via: google_io.compute_route(key, o, d, via),
         search=lambda seg, tok, q, typ: google_io.search_along(key, seg, tok, q, typ),
@@ -217,6 +222,8 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
         alerts=weather_io.fetch_alerts,
         fuel_state=fuel_state,
         position=position,
+        pois=pois,
+        drive_s=lambda o, d: google_io.drive_seconds(key, o, d),
     )
 
 
@@ -326,7 +333,14 @@ def _planner(args: argparse.Namespace) -> int:
     from loguru import logger
 
     from bigair.planner_server import make_server
-    from bigair.trip_service import TripError, plan_trip, request_from_json, result_to_json
+    from bigair.poi_near import reach_from_json
+    from bigair.trip_service import (
+        TripError,
+        plan_trip,
+        pois_for_cached,
+        request_from_json,
+        result_to_json,
+    )
 
     try:
         edges = _trip_edges(args.mqtt_host)
@@ -341,12 +355,23 @@ def _planner(args: argparse.Namespace) -> int:
             raise TripError(f"{problem} on the Pi (deploy/.env)")
         return result_to_json(plan_trip(request_from_json(payload), edges))
 
+    def run_pois(payload: dict[str, Any], last: dict[str, Any]) -> dict[str, Any]:
+        if edges is None:
+            raise TripError(f"{problem} on the Pi (deploy/.env)")
+        reach = payload.get("reach")
+        try:
+            r = reach_from_json(reach if isinstance(reach, dict) else None)
+        except ValueError as e:
+            raise TripError(str(e)) from e
+        return pois_for_cached(last, r, edges)
+
     server = make_server(
         args.host,
         args.port,
         run,
         Path(args.cache),
         daily_limit=args.daily_limit,
+        run_pois=run_pois,
     )
     logger.info("trip planner on {}:{}", args.host, args.port)
     with contextlib.suppress(KeyboardInterrupt):

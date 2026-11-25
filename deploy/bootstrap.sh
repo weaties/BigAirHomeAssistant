@@ -208,6 +208,28 @@ tailscale_host() {
   fi
 }
 
+# Vault POIs for the trip planner (#88). Syncthing receives Dan's POI folder from the
+# Mac, one way, into POI_HOST_DIR; the planner mounts it read-only. Pairing the two
+# devices is a one-time manual step (docs/hardware/syncthing-poi.md).
+syncthing_host() {
+  log "Syncthing for vault POIs (#88)"
+  local dir
+  dir="$(env_get POI_HOST_DIR)"
+  dir="${dir:-../data/poi}"
+  [[ "$dir" = /* ]] || dir="$DEPLOY/$dir"
+  mkdir -p "$dir"
+  if [[ "$(env_get SYNCTHING_ENABLE)" != "true" ]]; then
+    echo "SYNCTHING_ENABLE is not true in deploy/.env — skipping (POI folder: $dir)."
+    return
+  fi
+  if ! command -v syncthing >/dev/null; then
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq syncthing >/dev/null
+  fi
+  sudo systemctl enable --now "syncthing@$USER" >/dev/null 2>&1
+  echo "Syncthing running as $USER (web UI on this Pi's localhost:8384)."
+  echo "POI folder: $(cd "$dir" && pwd) — share it from the Mac as Send Only, accept here as Receive Only."
+}
+
 # Dash preview (#62, Decision #37). The preview server has no key, so Compose
 # publishes it on 127.0.0.1 only and `tailscale serve` exposes it to the tailnet,
 # never the van LAN. `serve --bg` persists across reboots; re-running is a no-op.
@@ -388,6 +410,7 @@ docker_log_limits
 secrets
 gps_host
 tailscale_host
+syncthing_host
 start_core
 provision_influx
 start_grafana
