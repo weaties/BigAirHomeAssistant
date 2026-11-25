@@ -63,6 +63,14 @@
   input[type=range] { width: 100%; }
   .hidden { display: none; }
   .scroll { overflow-x: auto; }
+  select, input[type=number] { padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font-size: 15px; }
+  input.visit { width: 64px; padding: 4px 6px; font-size: 14px; }
+  .poi { background: #c2410c; border: 2px solid #fff; border-radius: 6px; width: 16px; height: 16px;
+         box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+  .poi.on { background: var(--accent); }
+  .poi.dim { background: var(--unknown); }
+  .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); margin-right: 3px; }
 </style>
 </head>
 <body>
@@ -139,6 +147,29 @@
       </div>
     </div>
 
+    <div class="card hidden" id="poicard">
+      <h2>Points of interest near the route</h2>
+      <div class="row" style="margin-bottom:8px">
+        <label for="reach_mode" style="margin:0">Show POIs</label>
+        <select id="reach_mode">
+          <option value="detour">within a round-trip detour of</option>
+          <option value="each_way">within a drive (each way) of</option>
+          <option value="ahead">coming up in the next</option>
+        </select>
+        <input type="number" id="reach_hours" min="0.5" max="12" step="0.5" value="3" style="width:72px">
+        <span>hours</span>
+        <button type="button" id="reach_go">Update</button>
+      </div>
+      <div class="note" id="reachnote"></div>
+      <div class="scroll"><table id="pois"></table></div>
+      <div class="row" style="margin-top:8px">
+        <span id="poisum" class="muted"></span>
+        <span style="flex:1"></span>
+        <button type="button" class="primary" id="poi_add" disabled>Add selected as via &amp; re-plan</button>
+      </div>
+      <div class="note">Detour = drive from the route to the POI and back. Visit times come from your notes; change them here (remembered on this device). Times marked ? aren't known, so they aren't counted.</div>
+    </div>
+
     <div class="card" id="alertcard">
       <h2>Weather alerts on the route</h2>
       <div id="alerts"></div>
@@ -172,9 +203,10 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch { return 
                 set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
 let plan = null, optIdx = 0, leg = "out", map = null, layer = null, routeGeo = null;
+const picked = new Set();  // POI names ticked in the list
 
 // ---------- form ----------
-const FIELDS = ["origin", "destination", "via", "reserves"];
+const FIELDS = ["origin", "destination", "via", "reserves", "reach_mode", "reach_hours"];
 function loadForm() {
   try {
     const f = JSON.parse(store.get("planner.form") || "{}");
@@ -206,6 +238,7 @@ $("form").addEventListener("submit", async (ev) => {
     round_trip: $("round_trip").checked,
     depart: localIso($("depart").value), return_depart: $("round_trip").checked ? localIso($("return_depart").value) : null,
     reserves: $("reserves").value.split(",").map((s) => s.trim()).filter(Boolean),
+    reach: reach(),
   };
   $("go").disabled = true;
   $("status").textContent = "Planning… this takes about 15 seconds.";
@@ -319,6 +352,7 @@ function render(p) {
   $("legs").querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => { leg = c.dataset.leg; render(plan); }));
 
   renderOptions();
+  renderPois();
   renderAlerts();
   $("unpricedcard").classList.toggle("hidden", !p.unpriced.length);
   $("unpriced").innerHTML = p.unpriced.map((u) => `<div>${esc(u.name)}${u.where ? ", " + esc(u.where) : ""} <span class="muted">· mi ${roadMile(p, u.mile).toFixed(0)}</span></div>`).join("");
@@ -350,6 +384,105 @@ function renderOptions() {
   $("optnote").textContent = `Lowest point ${o.min_gal.toFixed(1)} gal (~${Math.round(o.min_gal * p.tank.planning_mpg)} mi). ` +
     `Arrive with ${o.end_gal.toFixed(1)} gal. Net ${money(o.net_cost_usd)} (fuel ${money(o.fuel_cost_usd)}, less fuel left over).${saves}${naive}`;
 }
+
+// ---------- points of interest (#88) ----------
+function reach() { return { mode: $("reach_mode").value, hours: Number($("reach_hours").value) || 3 }; }
+const REACH_TEXT = { detour: "round-trip detour", each_way: "drive each way", ahead: "of driving ahead" };
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const visitKey = (name) => "planner.visit." + name;
+function visitMin(h) {
+  const v = store.get(visitKey(h.name));
+  if (v !== null && v !== "" && !isNaN(Number(v))) return Number(v);
+  return h.visit_min;  // null when the note doesn't say
+}
+const hm = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${String(Math.round(m % 60)).padStart(2, "0")}` : `${Math.round(m)} min`);
+
+function renderPois() {
+  const b = plan.pois;
+  $("poicard").classList.toggle("hidden", !b || !b.enabled);
+  if (!b || !b.enabled) return;
+  if (b.reach) { $("reach_mode").value = b.reach.mode; $("reach_hours").value = b.reach.hours; }
+  $("reachnote").textContent = b.reach ? `Showing POIs within ${b.reach.hours} h ${REACH_TEXT[b.reach.mode]}.` : "";
+  (b.warnings || []).forEach((w) => { $("reachnote").textContent += " " + w; });
+  const names = new Set(b.hits.map((h) => h.name));
+  [...picked].forEach((n) => { if (!names.has(n)) picked.delete(n); });
+  if (!b.hits.length) {
+    $("pois").innerHTML = `<tr><td class="muted">No POIs in reach. Try a longer reach or another mode.</td></tr>`;
+    updatePoiSum();
+    return;
+  }
+  const rows = b.hits.map((h, i) => {
+    const detour = h.detour_min != null ? hm(h.detour_min)
+      : h.status === "unchecked" ? '<span class="muted" title="Over the lookup cap for one search">not checked</span>'
+      : '<span class="muted" title="The drive-time lookup failed">unknown</span>';
+    const v = visitMin(h);
+    const season = h.in_season === true ? '<span class="tag">in season</span>'
+      : h.in_season === false ? `<span class="tag" title="Best: ${(h.best_months || []).map((m) => MONTHS[m - 1]).join(", ")}">off season</span>` : "";
+    const stars = h.rating ? `<span class="tag">${"★".repeat(h.rating)}</span>` : "";
+    const camp = h.destination ? '<span class="tag">3-night stay</span>' : "";
+    const onRoute = (plan.request.via || []).includes(`${h.lat},${h.lon}`) ? '<span class="tag">on the route</span>' : "";
+    return `<tr><td><input type="checkbox" data-i="${i}" ${picked.has(h.name) ? "checked" : ""}></td>
+      <td><b>${esc(h.name)}</b> ${onRoute}${stars}${season}${camp}
+        ${h.summary ? `<div class="note">${esc(h.summary)}</div>` : ""}
+        ${h.visit_what ? `<div class="note">Visit: ${esc(h.visit_what)}</div>` : ""}</td>
+      <td class="num">mi ${h.mile.toFixed(0)}<div class="note">${fmtTime(new Date(h.eta))}</div></td>
+      <td class="num">${detour}</td>
+      <td class="num"><input class="visit" type="number" min="0" step="15" data-i="${i}" value="${v ?? ""}" placeholder="?"></td></tr>`;
+  }).join("");
+  $("pois").innerHTML = `<tr><th></th><th>Place</th><th class="num">Turn-off</th><th class="num">Detour</th><th class="num">Visit (min)</th></tr>${rows}`;
+  $("pois").querySelectorAll("input[type=checkbox]").forEach((c) => c.addEventListener("change", () => {
+    const h = b.hits[Number(c.dataset.i)];
+    if (c.checked) picked.add(h.name); else picked.delete(h.name);
+    updatePoiSum(); drawMap();
+  }));
+  $("pois").querySelectorAll("input.visit").forEach((inp) => inp.addEventListener("change", () => {
+    const h = b.hits[Number(inp.dataset.i)];
+    store.set(visitKey(h.name), inp.value);
+    updatePoiSum();
+  }));
+  updatePoiSum();
+}
+
+function updatePoiSum() {
+  const hits = (plan.pois && plan.pois.hits) || [];
+  const sel = hits.filter((h) => picked.has(h.name));
+  $("poi_add").disabled = !sel.length;
+  if (!sel.length) { $("poisum").textContent = ""; return; }
+  let drive = 0, visit = 0; const unknown = [];
+  sel.forEach((h) => {
+    if (h.detour_min == null) unknown.push("detour for " + h.name); else drive += h.detour_min;
+    const v = visitMin(h);
+    if (v == null) unknown.push("visit for " + h.name); else visit += v;
+  });
+  $("poisum").textContent = `${sel.length} picked · detours ${hm(drive)} + visits ${hm(visit)} = ${hm(drive + visit)} added` +
+    (unknown.length ? ` (not counted: ${unknown.join(", ")})` : "");
+}
+
+async function updatePois() {
+  saveForm();
+  $("reach_go").disabled = true;
+  $("reachnote").textContent = "Looking up detours…";
+  try {
+    const r = await fetch("api/pois", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reach: reach() }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    plan.pois = j;
+    renderPois(); drawMap();
+  } catch (e) {
+    $("reachnote").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
+  } finally {
+    $("reach_go").disabled = false;
+  }
+}
+$("reach_go").addEventListener("click", updatePois);
+$("poi_add").addEventListener("click", () => {
+  const sel = plan.pois.hits.filter((h) => picked.has(h.name)).sort((a, b) => a.mile - b.mile);
+  const via = $("via").value.split(";").map((s) => s.trim()).filter(Boolean);
+  sel.forEach((h) => { const ll = `${h.lat},${h.lon}`; if (!via.includes(ll)) via.push(ll); });
+  $("via").value = via.join("; ");
+  picked.clear();
+  $("form").requestSubmit();
+});
 
 function renderAlerts() {
   const a = plan.alerts || [];
@@ -417,6 +550,14 @@ function drawMap() {
 
   const o = p.options[optIdx];
   if (!layer) return;
+  ((p.pois && p.pois.enabled && p.pois.hits) || []).forEach((h) => {
+    const cls = picked.has(h.name) ? "poi on" : h.detour_min == null ? "poi dim" : "poi";
+    const icon = L.divIcon({ className: "", html: `<div class="${cls}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
+    const v = visitMin(h);
+    L.marker([h.lat, h.lon], { icon, zIndexOffset: 500 })
+      .bindPopup(`<b>${esc(h.name)}</b>${h.summary ? "<br>" + esc(h.summary) : ""}<br>detour ${h.detour_min != null ? hm(h.detour_min) : "unknown"} · visit ${v != null ? hm(v) : "?"}`)
+      .addTo(layer);
+  });
   if (o && o.feasible) {
     o.stops.forEach((s, i) => {
       if (s.lat == null || (p.request.round_trip && s.leg !== leg)) return;

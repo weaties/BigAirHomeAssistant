@@ -35,6 +35,7 @@ MUST_BE_IGNORED = [
     "deploy/.env",
     "deploy/volumes/influxdb/x",
     "data/fills.csv",
+    "data/poi/Some Place.md",  # Syncthing copy of the vault's POI notes (#88)
 ]
 
 

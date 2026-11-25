@@ -31,11 +31,13 @@ from bigair.fuel_sources import (
     build_stations,
     collect_candidates,
     decode_eia,
+    decode_polyline,
     decode_route,
     drift_per_day,
     encode_polyline,
     mirror_return,
 )
+from bigair.poi_near import LookupCache, PoiHit, Reach, near_route, reach_from_json
 from bigair.route_weather import (
     CLASSIFY,
     WMO_LABELS,
@@ -56,6 +58,8 @@ if TYPE_CHECKING:
 
     from bigair.fuel_plan import Station
     from bigair.fuel_sources import LiveFuel, Segment
+    from bigair.poi import Poi
+    from bigair.poi_near import DriveTime
 
 HERE = ("here", "current location", "current")
 DEFAULT_RESERVES = (150.0, 100.0, 75.0, 50.0)
@@ -86,6 +90,7 @@ class TripRequest:
     home_price: float | None = None
     max_age_h: float = 72.0
     weather_every_mi: float = 25.0
+    reach: Reach = Reach("detour", 3.0)
 
 
 @dataclass(frozen=True)
@@ -98,6 +103,12 @@ class TripEdges:
     alerts: Callable[[float, float], dict[str, Any]] | None = None
     fuel_state: Callable[[], LiveFuel | None] | None = None
     position: Callable[[], tuple[float, float] | None] | None = None
+    pois: Callable[[], tuple[list[Poi], list[str]]] | None = None
+    """The vault's POI notes and any load warnings (#88). None: no POI folder."""
+    drive_s: DriveTime | None = None
+    """Drive seconds between two points, for POI detours."""
+    poi_cache: LookupCache = field(default_factory=dict)
+    """Detour lookups already paid for, reused when the reach selector changes."""
 
 
 @dataclass(frozen=True)
@@ -117,6 +128,8 @@ class TripResult:
     hourly: list[Hourly]
     alerts: list[Alert]
     warnings: tuple[str, ...]
+    pois: list[PoiHit] = field(default_factory=list)
+    pois_enabled: bool = False
 
 
 def plan_trip(req: TripRequest, edges: TripEdges) -> TripResult:
@@ -209,6 +222,8 @@ def plan_trip(req: TripRequest, edges: TripEdges) -> TripResult:
             except (OSError, ValueError, KeyError) as e:
                 warnings.append(f"Weather alerts unavailable ({e}).")
 
+    hits, pois_enabled = _pois(route, depart, req.reach, edges, warnings)
+
     return TripResult(
         request=req,
         generated_at=now,
@@ -225,7 +240,68 @@ def plan_trip(req: TripRequest, edges: TripEdges) -> TripResult:
         hourly=hourly,
         alerts=alerts,
         warnings=tuple(warnings),
+        pois=hits,
+        pois_enabled=pois_enabled,
     )
+
+
+def _pois(
+    route: RouteInfo, depart: datetime, reach: Reach, edges: TripEdges, warnings: list[str]
+) -> tuple[list[PoiHit], bool]:
+    """POIs near the outbound route. Never fails the plan: problems become warnings."""
+    if edges.pois is None or edges.drive_s is None:
+        return [], False
+    pois, problems = edges.pois()
+    warnings.extend(problems)
+    return near_route(route, depart, pois, reach, edges.drive_s, edges.poi_cache), True
+
+
+def pois_for_cached(last: dict[str, Any], reach: Reach, edges: TripEdges) -> dict[str, Any]:
+    """Re-run the POI search on the cached plan's route with a new reach (no re-plan)."""
+    try:
+        route = RouteInfo.from_points(
+            decode_polyline(last["route"]["polyline"]),
+            float(last["route"]["one_way_mi"]),
+            float(last["route"]["duration_s"]),
+        )
+        depart = datetime.fromisoformat(last["depart"])
+    except (KeyError, TypeError, ValueError) as e:
+        raise TripError("the cached plan has no usable route; plan again") from e
+    warnings: list[str] = []
+    hits, enabled = _pois(route, depart, reach, edges, warnings)
+    return _pois_json(hits, enabled, reach, warnings)
+
+
+def _pois_json(
+    hits: list[PoiHit], enabled: bool, reach: Reach, warnings: list[str] | None = None
+) -> dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "reach": {"mode": reach.mode, "hours": reach.hours},
+        "warnings": warnings or [],
+        "hits": [
+            {
+                "name": h.poi.name,
+                "lat": h.poi.lat,
+                "lon": h.poi.lon,
+                "tags": list(h.poi.tags),
+                "summary": h.poi.summary,
+                "mile": round(h.mile, 1),
+                "eta": _iso(h.eta),
+                "off_route_mi": round(h.off_route_mi, 1),
+                "status": h.status,
+                "one_way_min": None if h.one_way_min is None else round(h.one_way_min),
+                "detour_min": None if h.detour_min is None else round(h.detour_min),
+                "visit_min": h.poi.visit_min,
+                "visit_what": h.poi.visit_what,
+                "best_months": None if h.poi.best_months is None else list(h.poi.best_months),
+                "in_season": h.in_season,
+                "rating": h.poi.rating,
+                "destination": h.poi.destination,
+            }
+            for h in hits
+        ],
+    }
 
 
 # --- presentation -----------------------------------------------------------------
@@ -376,6 +452,7 @@ def result_to_json(r: TripResult) -> dict[str, Any]:
             for a in r.alerts
         ],
         "warnings": list(r.warnings),
+        "pois": _pois_json(r.pois, r.pois_enabled, r.request.reach),
     }
 
 
@@ -409,6 +486,11 @@ def request_from_json(d: dict[str, Any]) -> TripRequest:
     if not reserves or any(r < 0 for r in reserves):
         raise TripError("reserves must be zero or more miles")
     discounts = d.get("discounts")
+    reach_in = d.get("reach")
+    try:
+        reach = reach_from_json(reach_in if isinstance(reach_in, dict) else None)
+    except ValueError as e:
+        raise TripError(str(e)) from e
     return TripRequest(
         origin=origin,
         destination=dest,
@@ -425,4 +507,5 @@ def request_from_json(d: dict[str, Any]) -> TripRequest:
         ),
         tank_gal=_num(d["tank_gal"], "tank_gal") if d.get("tank_gal") not in (None, "") else None,
         mpg=_num(d["mpg"], "mpg") if d.get("mpg") not in (None, "") else None,
+        reach=reach,
     )

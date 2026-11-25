@@ -130,3 +130,63 @@ def test_access_log_names_the_request(ok_url: str) -> None:
     assert "127.0.0.1" in line
     assert '"GET /health HTTP/1.1" 200' in line
     assert "%s" not in line
+
+
+# --- POI reach selector (#88) ----------------------------------------------------
+
+
+def _serve_pois(
+    tmp_path: Path, run_pois: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+) -> Iterator[str]:
+    server = make_server(
+        "127.0.0.1",
+        0,
+        lambda p: {"plan": p["destination"], "pois": {"hits": []}},
+        tmp_path / "plan.json",
+        20,
+        lambda: NOW,
+        run_pois=run_pois,
+    )
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+def test_pois_reuse_the_cached_plan_and_update_it(tmp_path: Path) -> None:
+    seen: list[tuple[dict[str, Any], dict[str, Any]]] = []
+
+    def run_pois(payload: dict[str, Any], last: dict[str, Any]) -> dict[str, Any]:
+        seen.append((payload, last))
+        return {"hits": [{"name": "Near Springs"}], "reach": payload["reach"]}
+
+    gen = _serve_pois(tmp_path, run_pois)
+    url = next(gen)
+    assert _req(f"{url}/api/pois", {"reach": {"mode": "detour", "hours": 1}})[0] == 409
+    _req(f"{url}/api/plan", {"origin": "A", "destination": "B"})
+    status, block = _req(f"{url}/api/pois", {"reach": {"mode": "detour", "hours": 1}})
+    assert status == 200
+    assert block["hits"] == [{"name": "Near Springs"}]
+    assert seen[0][1]["plan"] == "B"
+    _, last = _req(f"{url}/api/plan/last")
+    assert last["pois"]["hits"] == [{"name": "Near Springs"}]  # cache updated
+    next(gen, None)
+
+
+def test_pois_trip_error_is_400(tmp_path: Path) -> None:
+    def run_pois(payload: dict[str, Any], last: dict[str, Any]) -> dict[str, Any]:
+        raise TripError("reach mode must be one of detour, each_way, ahead")
+
+    gen = _serve_pois(tmp_path, run_pois)
+    url = next(gen)
+    _req(f"{url}/api/plan", {"origin": "A", "destination": "B"})
+    status, body = _req(f"{url}/api/pois", {"reach": {"mode": "fly"}})
+    assert status == 400
+    assert "reach mode" in body["error"]
+    next(gen, None)
+
+
+def test_pois_unavailable_without_a_poi_runner(ok_url: str) -> None:
+    _req(f"{ok_url}/api/plan", {"origin": "A", "destination": "B"})
+    assert _req(f"{ok_url}/api/pois", {"reach": {}})[0] == 404

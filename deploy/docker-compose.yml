@@ -147,8 +147,11 @@ services:
       PLANNER_PORT: 8092  # the healthcheck below assumes it
       PLANNER_CACHE: /data/trip-plan.json
       PLANNER_DAILY_LIMIT: ${PLANNER_DAILY_LIMIT:-20}
+      POI_DIR: /poi
     volumes:
       - ../data/bigair:/data  # cached last plan; gitignored
+      # Vault POI notes (#88), synced by Syncthing on the host; read-only here.
+      - ${POI_HOST_DIR:-../data/poi}:/poi:ro
     healthcheck:
       test:
         - CMD

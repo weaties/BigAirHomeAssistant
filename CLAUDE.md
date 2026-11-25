@@ -139,6 +139,7 @@ src/bigair/          # all Python; one small module per concern
   weather_io.py      #   edge: Open-Meteo forecasts, NWS alerts
   gps_logger.py      #   gpsd TPV → GpsFix, track-point cadence
   gpsd_io.py         #   edge: gpsd JSON client
+  poi.py / poi_near.py  # vault POI notes → Poi; POIs in reach of a planned route (#88)
   mqtt_io.py / influx_io.py   # edges (M1)
   main.py            #   wiring only
 tests/               # pytest, runs anywhere, no hardware
@@ -510,3 +511,14 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     backstop. Missing weather or alerts only add a warning; a missing route or fuel
     state, or stale fuel data, means no plan. Tests block outbound connections
     (`tests/conftest.py`).
+40. **2026-11-25 — Vault POIs reach the Pi by Syncthing, read-only** (Dan's choice,
+    #88). The trip planner reads Dan's road-trip POI notes (Obsidian frontmatter:
+    `location`, `tags`, plus optional `visit_min`, `visit_what`, `best_months`,
+    `destination` and `rating`). Syncthing sends only that folder one way, from the
+    Mac (Send Only) into gitignored `data/poi` on the Pi (Receive Only), and the
+    planner mounts it read-only. The notes are personal, so they never go in git,
+    and tests use synthetic POIs. The reach selector (round-trip detour / each way /
+    ahead) is Dan's to set on the page. The detour is twice the one-way drive from
+    the nearest route point, which errs long. A missing visit time or failed lookup
+    shows "unknown" and is never guessed. **300 mi/day is a ceiling, never a
+    target** (Dan): the scenic planner (#90–#92) must never score longer days higher.
