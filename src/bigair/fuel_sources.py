@@ -158,14 +158,23 @@ def money(m: dict[str, Any]) -> float:
 
 
 def decode_route(body: dict[str, Any]) -> RouteInfo:
+    return decode_routes(body)[0]
+
+
+def decode_routes(body: dict[str, Any]) -> list[RouteInfo]:
+    """Every route in a Routes API body: the first, then any alternatives (#100)."""
     routes = body.get("routes") or []
     if not routes:
         raise ValueError("no route found")
-    r = routes[0]
-    pts = decode_polyline(r["polyline"]["encodedPolyline"])
-    return RouteInfo.from_points(
-        pts, r["distanceMeters"] / M_PER_MI, parse_duration(r.get("duration", "0s"))
-    )
+    out = []
+    for r in routes:
+        pts = decode_polyline(r["polyline"]["encodedPolyline"])
+        out.append(
+            RouteInfo.from_points(
+                pts, r["distanceMeters"] / M_PER_MI, parse_duration(r.get("duration", "0s"))
+            )
+        )
+    return out
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from bigair.byways import choose_route
 from bigair.chain import Chain, Leg, sketch_chain
 from bigair.day_plan import Candidate, DayBudget, Proposal, day_budget, propose, score_poi
 from bigair.destinations import (
@@ -46,6 +47,7 @@ from bigair.fuel_sources import (
     decode_eia,
     decode_polyline,
     decode_route,
+    decode_routes,
     drift_per_day,
     encode_polyline,
     mirror_return,
@@ -70,6 +72,7 @@ from bigair.travel_rules import TravelRules
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from bigair.byways import ByWayIndex
     from bigair.fuel_plan import Station
     from bigair.fuel_sources import LiveFuel, Segment
     from bigair.poi import Poi
@@ -114,8 +117,8 @@ class TripRequest:
 
 @dataclass(frozen=True)
 class TripEdges:
-    route: Callable[[str, str, list[str], bool], dict[str, Any]]
-    """(origin, destination, via, avoid_highways) → Google route body."""
+    route: Callable[[str, str, list[str], bool, bool], dict[str, Any]]
+    """(origin, destination, via, avoid_highways, alternatives) → Google route body."""
     search: Callable[[Segment, str | None, str, str | None], dict[str, Any]]
     now: Callable[[], datetime]
     eia: Callable[[], dict[str, Any]] | None = None
@@ -134,6 +137,8 @@ class TripEdges:
     public_land: Callable[[], tuple[list[Destination], list[str]]] | None = None
     """BLM / USFS units from a local GeoJSON (#91)."""
     campgrounds: Callable[[tuple[float, float, float, float]], list[Destination]] | None = None
+    byways: Callable[[], ByWayIndex | None] | None = None
+    """Scenic byway lines for slow mode's route choice (#100)."""
     """Google Places campgrounds in a (south, west, north, east) box: the fallback."""
 
 
@@ -169,6 +174,10 @@ class DayPlan:
     route_mi: float
     rules: TravelRules
     proposal: Proposal
+    byway_mi: float | None = None
+    """Byway miles on the chosen route; None without a byways file."""
+    byway_names: dict[str, float] = field(default_factory=dict)
+    route_why: str = ""
 
 
 def _slow_depart(now: datetime, rules: TravelRules, offset_min: int | None) -> datetime:
@@ -194,7 +203,11 @@ def plan_trip(req: TripRequest, edges: TripEdges, rules: TravelRules | None = No
 
     try:
         avoid = slow and rules.avoid_interstates
-        route = decode_route(edges.route(origin, req.destination, list(req.via), avoid))
+        byway_idx = edges.byways() if (slow and edges.byways is not None) else None
+        alts = byway_idx is not None and not req.via
+        body = edges.route(origin, req.destination, list(req.via), avoid, alts)
+        routes = decode_routes(body)
+        route = routes[0]
     except ValueError as e:
         raise TripError(f"no route from {req.origin} to {req.destination}") from e
 
@@ -227,6 +240,13 @@ def plan_trip(req: TripRequest, edges: TripEdges, rules: TravelRules | None = No
         depart = _slow_depart(now, rules, req.utc_offset_min)
     else:
         depart = now
+    route_why = ""
+    byway_mi: float | None = None
+    byway_names: dict[str, float] = {}
+    if byway_idx is not None:
+        window = day_budget(depart, rules, route.points[-1]).window_min
+        route, route_why = choose_route(routes, byway_idx, window, rules.max_day_mi)
+        byway_mi, byway_names = byway_idx.byway_miles(route)
     found = collect_candidates(route, edges.search)
     stations = build_stations(
         found.candidates, route, now, depart, drifts, req.discounts, req.max_age_h
@@ -291,6 +311,9 @@ def plan_trip(req: TripRequest, edges: TripEdges, rules: TravelRules | None = No
             route.total_mi,
             rules,
             propose(_candidates(hits, scores), drive_min, route.total_mi, budget.window_min, rules),
+            byway_mi,
+            byway_names,
+            route_why,
         )
 
     return TripResult(
@@ -455,6 +478,13 @@ def _day_json(day: DayPlan | None) -> dict[str, Any]:
         "max_day_mi": r.max_day_mi,
         "stay_nights": r.stay_nights,
         "proposal": _proposal_json(day.proposal),
+        "byways": None
+        if day.byway_mi is None
+        else {
+            "miles": round(day.byway_mi),
+            "names": {k: round(v) for k, v in day.byway_names.items()},
+            "why": day.route_why,
+        },
     }
 
 
@@ -569,7 +599,7 @@ def discover(
             warnings.append("No destinations in range: nothing to search from.")
             return DiscoverResult(req, now, (0.0, 0.0), depart, [], tuple(warnings))
         try:
-            r0 = decode_route(edges.route(origin_str, f"{probe.lat},{probe.lon}", [], False))
+            r0 = decode_route(edges.route(origin_str, f"{probe.lat},{probe.lon}", [], False, False))
         except ValueError as e:
             raise TripError(f"couldn't find {req.origin}") from e
         origin_pt = r0.points[0]
@@ -604,7 +634,7 @@ def discover(
     routed: list[tuple[Destination, RouteInfo]] = []
     for c in cands[:MAX_ROUTED_DESTINATIONS]:
         try:
-            body = edges.route(origin_str, f"{c.lat},{c.lon}", [], rules.avoid_interstates)
+            body = edges.route(origin_str, f"{c.lat},{c.lon}", [], rules.avoid_interstates, False)
             routed.append((c, decode_route(body)))
         except (OSError, ValueError, KeyError, RuntimeError) as e:
             warnings.append(f"No route to {c.name} ({e}).")
@@ -734,7 +764,7 @@ def chain_plan(
     origin_str, _ = _resolve_origin(req.origin, edges)
     start = _slow_depart(now, rules, req.utc_offset_min).date()
     try:
-        body = edges.route(origin_str, req.goal, [], rules.avoid_interstates)
+        body = edges.route(origin_str, req.goal, [], rules.avoid_interstates, False)
         route = decode_route(body)
     except ValueError as e:
         raise TripError(f"no route from {req.origin} to {req.goal}") from e

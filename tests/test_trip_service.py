@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from bigair.byways import ByWayIndex
 from bigair.fuel_sources import LiveFuel, encode_polyline
 from bigair.poi import Poi
 from bigair.poi_near import Reach
@@ -159,7 +160,7 @@ def test_json_is_serialisable_and_has_map_data() -> None:
 def test_current_location_uses_gps() -> None:
     seen: list[str] = []
 
-    def route(o: str, d: str, via: list[str], avoid: bool) -> dict[str, Any]:
+    def route(o: str, d: str, via: list[str], avoid: bool, alt: bool) -> dict[str, Any]:
         seen.append(o)
         return _route()
 
@@ -306,8 +307,10 @@ def test_changing_the_reach_reuses_the_cached_route_without_replanning() -> None
 PST = "-08:00"
 
 
-def _recording_route(seen: list[bool]) -> Callable[[str, str, list[str], bool], dict[str, Any]]:
-    def route(o: str, d: str, via: list[str], avoid: bool) -> dict[str, Any]:
+def _recording_route(
+    seen: list[bool],
+) -> Callable[[str, str, list[str], bool, bool], dict[str, Any]]:
+    def route(o: str, d: str, via: list[str], avoid: bool, alt: bool) -> dict[str, Any]:
         seen.append(avoid)
         return _route()
 
@@ -414,3 +417,58 @@ def test_a_utc_departure_is_read_in_the_phones_time_zone() -> None:
     r = plan_trip(req, _poi_edges())
     assert r.day is not None
     assert r.day.budget.window_min == pytest.approx(360)  # 09:00 → 15:00 PST
+
+
+# --- scenic byways in slow mode (#100) ---------------------------------------------
+
+POLY_EAST = encode_polyline([(40.0 + i * 0.1, -119.8) for i in range(21)])  # 10 mi east
+
+
+def _two_routes(
+    seen: list[tuple[bool, bool]],
+) -> Callable[[str, str, list[str], bool, bool], dict[str, Any]]:
+    def route(o: str, d: str, via: list[str], avoid: bool, alternatives: bool) -> dict[str, Any]:
+        seen.append((avoid, alternatives))
+        fast = {"distanceMeters": 300000, "duration": "13000s",
+                "polyline": {"encodedPolyline": POLY_EAST}}  # fmt: skip
+        scenic = {"distanceMeters": 321869, "duration": "14400s",
+                  "polyline": {"encodedPolyline": POLY}}  # fmt: skip
+        return {"routes": [fast, scenic] if alternatives else [fast]}
+
+    return route
+
+
+def _byway_index() -> ByWayIndex:
+    idx = ByWayIndex()
+    idx.add("Lake Byway", [(40.5, -120.0), (41.0, -120.0), (41.5, -120.0)])
+    return idx
+
+
+def test_slow_mode_picks_the_most_scenic_alternative_that_fits() -> None:
+    seen: list[tuple[bool, bool]] = []
+    depart = datetime.fromisoformat("2026-11-25T08:00:00" + PST)
+    edges = _poi_edges(route=_two_routes(seen), byways=_byway_index)
+    r = plan_trip(TripRequest("A", "B", mode="slow", depart=depart), edges)
+    assert seen == [(True, True)]
+    assert r.route.points[0] == pytest.approx((40.0, -120.0))  # the byway route, not the first
+    assert r.day is not None
+    assert r.day.byway_mi == pytest.approx(100.0, abs=10.0)  # 1° of the 200-road-mi route
+    assert "most scenic of 2" in r.day.route_why
+    day = result_to_json(r)["day"]
+    assert day["byways"]["miles"] > 60
+    assert "Lake Byway" in day["byways"]["why"]
+
+
+def test_quick_mode_and_via_points_ask_for_no_alternatives() -> None:
+    seen: list[tuple[bool, bool]] = []
+    edges = _poi_edges(route=_two_routes(seen), byways=_byway_index)
+    plan_trip(TripRequest("A", "B"), edges)
+    plan_trip(TripRequest("A", "B", mode="slow", via=("C",)), edges)
+    assert seen == [(False, False), (True, False)]
+
+
+def test_slow_mode_without_a_byways_file_keeps_googles_route() -> None:
+    seen: list[tuple[bool, bool]] = []
+    r = plan_trip(TripRequest("A", "B", mode="slow"), _poi_edges(route=_two_routes(seen)))
+    assert seen == [(True, False)]
+    assert r.day is not None and r.day.byway_mi is None

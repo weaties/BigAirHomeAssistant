@@ -193,8 +193,14 @@ tag_weights: {hot-springs: 0.5, geology: 0.25}
 
 A bad file is logged and the defaults are used.
 
-Not in this phase: scenic byways (needs the FHWA byways dataset on the Pi) and
-Claude's "why this way" explanation (#89).
+**Scenic byways (#100).** With `data/bigair/byways.geojson` on the Pi (National
+Scenic Byways from USDOT's `US_Scenic_Byways` service, western states), slow mode
+asks Google for alternative routes. Of the ones that fit the day (the window and
+300 mi), it keeps the one with the most byway miles; ties go to the shorter. A
+route stretch counts when it's within 0.5 mi of a byway. A byway never justifies
+breaking the rules. The day card says which byways the route uses, or why none.
+Google gives no alternatives once you add via points, so a planned via route is
+taken as is. Claude's "Why this way?" is in [claude.md](claude.md).
 
 ### Where next? Destination discovery (#91)
 

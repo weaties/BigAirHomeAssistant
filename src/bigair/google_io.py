@@ -71,7 +71,12 @@ def waypoint(place: str) -> dict[str, Any]:
 
 
 def compute_route(
-    key: str, origin: str, destination: str, via: list[str], avoid_highways: bool = False
+    key: str,
+    origin: str,
+    destination: str,
+    via: list[str],
+    avoid_highways: bool = False,
+    alternatives: bool = False,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "origin": waypoint(origin),
@@ -83,6 +88,8 @@ def compute_route(
         body["intermediates"] = [waypoint(v) for v in via]
     if avoid_highways:  # slow mode (#90): Google's nearest thing to "no interstates"
         body["routeModifiers"] = {"avoidHighways": True}
+    if alternatives and not via:  # #100; Google returns no alternatives with intermediates
+        body["computeAlternativeRoutes"] = True
     return _post(ROUTES_URL, key, ROUTE_FIELDS, body)
 
 

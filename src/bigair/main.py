@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from bigair.byways import ByWayIndex
     from bigair.claude_service import ClaudeService
     from bigair.fuel_sources import LiveFuel
     from bigair.travel_rules import TravelRules
@@ -190,7 +191,10 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
     import asyncio
     from datetime import UTC, datetime
 
+    from loguru import logger
+
     from bigair import eia_io, google_io, weather_io
+    from bigair.byways import load_byways
     from bigair.dest_sources import load_ioverlander, load_public_land
     from bigair.fuel_sources import live_fuel_from_state
     from bigair.gpsd_io import current_fix
@@ -215,12 +219,24 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
     # POIs from the vault (#88): the Syncthing folder, mounted read-only.
     poi_dir = os.environ.get("POI_DIR", "")
     pois = (lambda: load_pois(Path(poi_dir))) if poi_dir else None
+    # Scenic byways for slow mode (#100): a local GeoJSON of byway lines, loaded once.
+    byways_file = os.environ.get("BYWAYS_FILE", "")
+    byway_cache: dict[str, Any] = {}
+
+    def byways() -> ByWayIndex | None:
+        if "idx" not in byway_cache:
+            idx, problems = load_byways(Path(byways_file))
+            for p in problems:
+                logger.warning("{}", p)
+            byway_cache["idx"] = idx
+        return byway_cache["idx"]  # type: ignore[no-any-return]
+
     # Destination sources (#91): Dan's iOverlander exports and a public-land GeoJSON.
     iover_dir = os.environ.get("IOVERLANDER_DIR", "")
     land_file = os.environ.get("PUBLIC_LAND_FILE", "")
 
     return TripEdges(
-        route=lambda o, d, via, avoid: google_io.compute_route(key, o, d, via, avoid),
+        route=lambda o, d, via, avoid, alt: google_io.compute_route(key, o, d, via, avoid, alt),
         search=lambda seg, tok, q, typ: google_io.search_along(key, seg, tok, q, typ),
         now=lambda: datetime.now(UTC),
         eia=lambda: eia_io.fetch_diesel(eia_key),
@@ -233,6 +249,7 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
         ioverlander=(lambda: load_ioverlander(Path(iover_dir))) if iover_dir else None,
         public_land=(lambda: load_public_land(Path(land_file))) if land_file else None,
         campgrounds=lambda bbox: google_io.search_campgrounds(key, bbox),
+        byways=byways if byways_file else None,
     )
 
 
