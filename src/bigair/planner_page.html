@@ -150,6 +150,7 @@
       <h2 style="margin:0">Ask Claude <small class="muted" id="claudestatus" style="font-weight:normal"></small></h2>
       <button type="button" id="chat_new">New chat</button>
     </div>
+    <div id="briefing" class="note" style="margin-top:6px"></div>
     <div class="msgs" id="chatmsgs"></div>
     <textarea id="chat_in" rows="2" placeholder="Somewhere quiet with water and shade within 150 mi, dog-friendly?"></textarea>
     <div class="row" style="margin-top:6px"><span class="note" id="chatnote">Claude can look up your POIs, campsites, public land, the plan and the forecast. It only suggests.</span>
@@ -627,6 +628,9 @@ $("chat_in").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.sh
 $("chat_new").addEventListener("click", () => { chatSave([]); chatRender(); $("chatnote").textContent = ""; });
 chatRender();
 claudeStatus();
+fetch("api/claude/briefing").then((r) => (r.ok ? r.json() : null)).then((b) => {
+  if (b && b.text) $("briefing").innerHTML = `<b>Tonight's briefing</b> (${esc(b.date)}): ${esc(b.text)}`;
+}).catch(() => {});
 fetch("api/claude/proposals").then((r) => (r.ok ? r.json() : [])).then(renderProposals).catch(() => {});
 
 // ---------- a chain of legs to a far goal (#92) ----------

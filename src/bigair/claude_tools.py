@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from bigair.claude_agent import AgentContext, Tool
 from bigair.destinations import Destination, crow_mi
 from bigair.route_weather import conditions_at, decode_open_meteo, wmo_label
+from bigair.telemetry import DBS, SCHEMA, shape_result, validate_influxql
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,6 +39,8 @@ class ToolDeps:
     """(lat, lon, ISO time) → conditions then, or None beyond the forecast."""
     places: Callable[[], list[Destination]] | None = None
     """iOverlander and public-land spots (#91), for find_destinations (#93)."""
+    telemetry: Callable[[str, str], dict[str, Any]] | None = None
+    """(database, InfluxQL) → InfluxQL JSON, over a read-only token (#94)."""
 
 
 def _obj(props: dict[str, Any]) -> dict[str, Any]:
@@ -161,9 +164,45 @@ def build_tools(deps: ToolDeps) -> list[Tool]:
         pid = ctx.propose("route", str(a["title"]), params, str(a["reason"]))
         return {"status": "proposed; Dan decides on the planner page", "proposal_id": pid}
 
+    def schema(ctx: AgentContext, a: dict[str, Any]) -> dict[str, Any]:
+        return {"schema": SCHEMA}
+
+    def query(ctx: AgentContext, a: dict[str, Any]) -> dict[str, Any]:
+        assert deps.telemetry is not None
+        db = str(a["db"])
+        if db not in DBS:
+            return {"error": f"db must be one of {', '.join(DBS)}"}
+        try:
+            q = validate_influxql(str(a["influxql"]))
+        except ValueError as e:
+            return {"error": str(e)}
+        return shape_result(deps.telemetry(db, q))
+
     num = {"type": "number"}
     s = {"type": "string"}
+    telemetry_tools = (
+        [
+            Tool(
+                "telemetry_schema",
+                "The van's InfluxDB measurements and fields (fuel, engine, heater, "
+                "electrical, track, fill-ups, trips), with units.",
+                _obj({}),
+                schema,
+            ),
+            Tool(
+                "query_telemetry",
+                "Run one read-only InfluxQL SELECT or SHOW against van_raw or van_history. "
+                "A SELECT needs a time range (e.g. WHERE time > now() - 1d) or a LIMIT; "
+                "aggregate with GROUP BY time(...) to keep results small. Times are UTC.",
+                _obj({"db": {"type": "string", "enum": list(DBS)}, "influxql": s}),
+                query,
+            ),
+        ]
+        if deps.telemetry is not None
+        else []
+    )
     return [
+        *telemetry_tools,
         Tool("where_is_the_van", "The van's current GPS position.", _obj({}), where),
         Tool(
             "find_pois",

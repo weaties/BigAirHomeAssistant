@@ -152,6 +152,9 @@ services:
       IOVERLANDER_DIR: /data/ioverlander  # Dan's iOverlander GPX exports (#91)
       PUBLIC_LAND_FILE: /data/public-land.geojson  # BLM/USFS units (#91)
       BYWAYS_FILE: /data/byways.geojson  # National Scenic Byways for slow mode (#100)
+      TZ: ${TZ}  # the evening briefing runs on local time (#94)
+      BRIEFING_TIME: ${BRIEFING_TIME:-19:00}
+      PLANNER_URL: ${PLANNER_URL:-http://bigair-ha.local:8092/}
     volumes:
       - ../data/bigair:/data  # cached last plan; gitignored
       # Vault POI notes (#88), synced by Syncthing on the host; read-only here.

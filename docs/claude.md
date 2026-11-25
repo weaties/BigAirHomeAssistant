@@ -24,6 +24,30 @@ up to 24 messages, and older ones drop off. HA Assist and voice aren't covered:
 HA's built-in Claude integration can only reach HA entities, so that would need
 a custom integration.
 
+## Ask the van (#94)
+
+In the chat, ask about the van's history: "why was mpg bad yesterday?", "how much
+heater fuel this week?", "what did the coolant peak at on the pass?". Claude reads
+the measurement list (`telemetry_schema`) and runs InfluxQL with
+`query_telemetry`, using the **read-only** Grafana token. bigair also accepts only
+one `SELECT` or `SHOW`, never `INTO`, `DROP` or `DELETE`, and a `SELECT` must have
+a time range or a `LIMIT`. Results are trimmed to 200 rows per series. Answers
+quote the numbers they used. Not every measurement has data yet.
+
+## Evening briefing (#94)
+
+At `BRIEFING_TIME` (default 19:00, local time on the Pi), Claude writes tomorrow's
+drive in a few short sentences: the route, the best stop, the weather that
+matters and where you'll sleep. With no plan, it gives one line on where you
+could head next. bigair stores it (`data/bigair/claude-briefing.json`, shown
+under Ask Claude) and publishes it on `bigair/claude/briefing`. HA's
+`homeassistant/packages/claude.yaml` sends it to the phone through
+`mobile_app_notify`, and tapping it opens the planner.
+
+It runs once a day and only until 3 h after its time, so a reboot at 2am doesn't
+send last night's. Offline, it's recorded as offline and not sent. Set
+`BRIEFING_TIME=` (empty) to turn it off. Each briefing costs a few cents.
+
 ## Set up
 
 1. Create an API key at console.anthropic.com. **Set a monthly spend limit there
@@ -43,6 +67,7 @@ Without a key, the card says "not set up" and everything else works.
 | `last_plan` | the plan on the page: route, day budget, POIs and scores, proposed stops |
 | `find_destinations` | 3-night spots: your POIs, iOverlander, public land (free, straight line) |
 | `weather_at` | Open-Meteo forecast at a point and time |
+| `telemetry_schema`, `query_telemetry` | the van's history, read-only InfluxQL (#94) |
 | `propose_route` | records a suggestion; the only tool that "writes" |
 
 It never sees your personal planning notes. The travel rules (300 mi a day as a
