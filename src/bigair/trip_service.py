@@ -15,9 +15,10 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from bigair.chain import Chain, Leg, sketch_chain
 from bigair.day_plan import Candidate, DayBudget, Proposal, day_budget, propose, score_poi
 from bigair.destinations import (
     DEDUPE_MI,
@@ -700,6 +701,100 @@ def discover_request_from_json(d: dict[str, Any]) -> DiscoverRequest:
     return DiscoverRequest(
         origin=origin, depart=_local(depart, offset), utc_offset_min=offset, reach=reach
     )
+
+
+# --- a chain of legs to a far goal (#92) -------------------------------------------
+
+
+@dataclass(frozen=True)
+class ChainRequest:
+    origin: str
+    goal: str
+    by: date
+    utc_offset_min: int | None = None
+
+
+@dataclass(frozen=True)
+class ChainResult:
+    request: ChainRequest
+    generated_at: datetime
+    start: date
+    route_mi: float
+    chain: Chain
+    warnings: tuple[str, ...]
+
+
+def chain_plan(
+    req: ChainRequest, edges: TripEdges, rules: TravelRules | None = None
+) -> ChainResult:
+    """Sketch the legs and stays to ``goal`` by ``by``, starting at the next departure."""
+    rules = rules or TravelRules()
+    now = edges.now()
+    warnings: list[str] = []
+    origin_str, _ = _resolve_origin(req.origin, edges)
+    start = _slow_depart(now, rules, req.utc_offset_min).date()
+    try:
+        body = edges.route(origin_str, req.goal, [], rules.avoid_interstates)
+        route = decode_route(body)
+    except ValueError as e:
+        raise TripError(f"no route from {req.origin} to {req.goal}") from e
+    pois = _load(edges.pois, warnings)
+    vault = [
+        Destination(p.name, p.lat, p.lon, "poi", None, p.summary, p) for p in pois if p.destination
+    ]
+    cands = [*vault, *_load(edges.ioverlander, warnings), *_load(edges.public_land, warnings)]
+    c = sketch_chain(route, start, req.by, cands, rules)
+    return ChainResult(req, now, start, route.total_mi, c, tuple(warnings) + c.warnings)
+
+
+def chain_to_json(r: ChainResult) -> dict[str, Any]:
+    def name(leg: Leg) -> str:
+        if leg.is_goal:
+            return r.request.goal
+        if leg.to is not None:
+            return str(leg.to.name)
+        return f"Open spot near {leg.point[0]:.2f},{leg.point[1]:.2f}"
+
+    return {
+        "generated_at": _iso(r.generated_at),
+        "goal": r.request.goal,
+        "by": r.request.by.isoformat(),
+        "start": r.start.isoformat(),
+        "route_mi": round(r.route_mi),
+        "stay_nights": r.chain.stay_nights,
+        "warnings": list(r.warnings),
+        "legs": [
+            {
+                "index": leg.index,
+                "depart": leg.depart.isoformat(),
+                "name": name(leg),
+                "source": leg.to.source if leg.to is not None else None,
+                "lat": round(leg.point[0], 5),
+                "lon": round(leg.point[1], 5),
+                "is_goal": leg.is_goal,
+                "open": leg.to is None and not leg.is_goal,
+                "approx_mi": round(leg.approx_mi),
+                "nights": leg.nights,
+            }
+            for leg in r.chain.legs
+        ],
+    }
+
+
+def chain_request_from_json(d: dict[str, Any]) -> ChainRequest:
+    origin = str(d.get("origin") or "").strip()
+    goal = str(d.get("goal") or "").strip()
+    if not origin:
+        raise TripError("give a starting place (or Here)")
+    if not goal:
+        raise TripError("give a far goal")
+    try:
+        by = date.fromisoformat(str(d.get("by") or ""))
+    except ValueError as e:
+        raise TripError("the arrive-by date must be YYYY-MM-DD") from e
+    offset_in = d.get("utc_offset_min")
+    offset = None if offset_in in (None, "") else round(_num(offset_in, "utc_offset_min"))
+    return ChainRequest(origin, goal, by, offset)
 
 
 # --- presentation -----------------------------------------------------------------

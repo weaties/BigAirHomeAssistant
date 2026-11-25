@@ -344,6 +344,9 @@ def _planner(args: argparse.Namespace) -> int:
     from bigair.travel_rules import TravelRules, load_rules
     from bigair.trip_service import (
         TripError,
+        chain_plan,
+        chain_request_from_json,
+        chain_to_json,
         discover,
         discover_request_from_json,
         discover_to_json,
@@ -389,6 +392,11 @@ def _planner(args: argparse.Namespace) -> int:
             raise TripError(f"{problem} on the Pi (deploy/.env)")
         return discover_to_json(discover(discover_request_from_json(payload), edges, rules))
 
+    def run_chain(payload: dict[str, Any]) -> dict[str, Any]:
+        if edges is None:
+            raise TripError(f"{problem} on the Pi (deploy/.env)")
+        return chain_to_json(chain_plan(chain_request_from_json(payload), edges, rules))
+
     server = make_server(
         args.host,
         args.port,
@@ -397,6 +405,7 @@ def _planner(args: argparse.Namespace) -> int:
         daily_limit=args.daily_limit,
         run_pois=run_pois,
         run_destinations=run_destinations,
+        run_chain=run_chain,
     )
     logger.info("trip planner on {}:{}", args.host, args.port)
     with contextlib.suppress(KeyboardInterrupt):

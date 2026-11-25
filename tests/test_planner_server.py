@@ -214,3 +214,19 @@ def test_destinations_endpoint_runs_and_limits(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_chain_endpoint(tmp_path: Path) -> None:
+    server = make_server(
+        "127.0.0.1", 0, lambda p: {}, tmp_path / "plan.json", 2, lambda: NOW,
+        run_chain=lambda p: {"legs": [{"name": "Open spot"}]},
+    )  # fmt: skip
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        status, body = _req(f"{url}/api/chain", {"origin": "here", "goal": "X", "by": "2027-06-01"})
+        assert (status, body["legs"][0]["name"]) == (200, "Open spot")
+    finally:
+        server.shutdown()
+        server.server_close()

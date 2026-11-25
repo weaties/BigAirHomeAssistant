@@ -220,6 +220,27 @@ beats a far one, and legs that don't fit sink to the bottom with the reason.
 Both files are optional and read on every search. A missing one adds nothing;
 a bad one is a warning.
 
+### Far goal: a rough chain of legs (#92)
+
+Under **Where next?**, give a **Far goal** and the date to be there **by**, then
+tap **Sketch the way**. One slow-mode route to the goal is split into legs:
+
+- **as many legs as the time allows**, moving every 3 nights, so the days are
+  short;
+- never fewer legs than 300 mi a day needs, and never shorter than 50 mi.
+
+Each stop snaps to the best-scoring destination within 40 mi (your POIs,
+iOverlander, public land). Where there's none, it's an **open spot**: run
+**Where next?** when you get there.
+
+If the date is too close for 3-night stays, the stays shorten and the sketch
+says so. If even 300 mi a day can't make it, it says that instead. A leg that
+snapping pushes over 300 mi is flagged.
+
+It's a frame to improvise against. Only the first leg gets a **Plan this leg**
+button (or **Find a spot near here** for an open spot). Re-sketch from wherever
+you are. Leg miles are approximate (along the route, plus the distance off it).
+
 ## Trip file
 
 Real trips stay out of git, because this repo is public. Keep them on the Pi

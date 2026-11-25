@@ -6,6 +6,7 @@
 - POST /api/pois         → re-run the POI search on the cached plan's route with
                            a new reach (#88), without re-planning, and update the cache
 - POST /api/destinations → where to spend the next nights, from a start (#91)
+- POST /api/chain        → a rough chain of legs and stays to a far goal (#92)
 - GET  /health           → 200
 
 Plans call paid Google APIs, and the page is reachable from the van Wi-Fi and
@@ -68,6 +69,7 @@ def make_server(
     now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
     run_pois: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
     run_destinations: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    run_chain: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> ThreadingHTTPServer:
     limiter = _Limiter(daily_limit, now_fn)
     poi_limiter = _Limiter(daily_limit * POI_LIMIT_FACTOR, now_fn)
@@ -137,7 +139,10 @@ def make_server(
                 self._pois()
                 return
             if path == "/api/destinations" and run_destinations is not None:
-                self._destinations()
+                self._search(run_destinations, "destination search")
+                return
+            if path == "/api/chain" and run_chain is not None:
+                self._search(run_chain, "chain sketch")
                 return
             if path != "/api/plan":
                 self._json(404, {"error": "not found"})
@@ -169,8 +174,7 @@ def make_server(
             finally:
                 limiter.busy.release()
 
-        def _destinations(self) -> None:
-            assert run_destinations is not None
+        def _search(self, run: Callable[[dict[str, Any]], dict[str, Any]], what: str) -> None:
             payload = self._body()
             if payload is None:
                 return
@@ -179,15 +183,15 @@ def make_server(
                 return
             try:
                 if not dest_limiter.take():
-                    self._json(429, {"error": "daily limit of destination searches reached"})
+                    self._json(429, {"error": f"daily limit for {what} reached"})
                     return
                 try:
-                    self._json(200, run_destinations(payload))
+                    self._json(200, run(payload))
                 except TripError as e:
                     self._json(400, {"error": str(e)})
                 except Exception as e:  # an upstream API failed; say so, keep serving
-                    logger.warning("destination search failed: {}", e)
-                    self._json(502, {"error": f"destination search failed: {e}"})
+                    logger.warning("{} failed: {}", what, e)
+                    self._json(502, {"error": f"{what} failed: {e}"})
             finally:
                 limiter.busy.release()
 
