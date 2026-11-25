@@ -196,6 +196,30 @@ A bad file is logged and the defaults are used.
 Not in this phase: scenic byways (needs the FHWA byways dataset on the Pi) and
 Claude's "why this way" explanation (#89).
 
+### Where next? Destination discovery (#91)
+
+The **Where next?** card (above the plan) answers "where should we spend the
+next few nights?" from the **From** field (or 📍 Here). Candidates come from:
+
+| Source | Where it comes from |
+|---|---|
+| Your POIs | vault notes with `destination: true` |
+| iOverlander | GPX exports in `data/bigair/ioverlander/` (Wild Camping, Informal Campsite, campgrounds) |
+| Public land | BLM / USFS units from `data/bigair/public-land.geojson`, e.g. a regional PAD-US extract |
+| Campgrounds | Google Places, only when none of the above is in range |
+
+Candidates must be within the 300 mi ceiling in a straight line and at least
+5 mi away. Duplicates within 1 mi keep the vault one. The 8 most promising (own
+score first, then the closest) are routed slow-mode style. Each option shows
+its road miles, its arrival time, and its score: the destination's own score
+(rating, season and weather on arrival; campgrounds −0.25) plus the stops S2
+would propose on the way. Distance is never rewarded: a closer, richer place
+beats a far one, and legs that don't fit sink to the bottom with the reason.
+**Plan this leg** switches to slow mode and plans it.
+
+Both files are optional and read on every search. A missing one adds nothing;
+a bad one is a warning.
+
 ## Trip file
 
 Real trips stay out of git, because this repo is public. Keep them on the Pi

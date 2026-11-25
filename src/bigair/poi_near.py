@@ -120,6 +120,7 @@ def near_route(
     reach: Reach,
     drive_s: DriveTime,
     cache: LookupCache | None = None,
+    max_lookups: int = MAX_LOOKUPS,
 ) -> list[PoiHit]:
     """POIs in reach of the route, ordered by detour, then rating, then season."""
     cache = {} if cache is None else cache
@@ -143,7 +144,7 @@ def near_route(
         if key in cache:
             leg = cache[key]
             status = "ok"
-        elif lookups >= MAX_LOOKUPS:
+        elif lookups >= max_lookups:
             status = "unchecked"
         else:
             lookups += 1

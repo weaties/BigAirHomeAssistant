@@ -190,3 +190,27 @@ def test_pois_trip_error_is_400(tmp_path: Path) -> None:
 def test_pois_unavailable_without_a_poi_runner(ok_url: str) -> None:
     _req(f"{ok_url}/api/plan", {"origin": "A", "destination": "B"})
     assert _req(f"{ok_url}/api/pois", {"reach": {}})[0] == 404
+
+
+def test_destinations_endpoint_runs_and_limits(tmp_path: Path) -> None:
+    def run_dest(payload: dict[str, Any]) -> dict[str, Any]:
+        if payload.get("origin") == "bad":
+            raise TripError("give a starting place (or Here)")
+        return {"options": [{"name": "Springs"}]}
+
+    server = make_server(
+        "127.0.0.1", 0, lambda p: {}, tmp_path / "plan.json", 2, lambda: NOW,
+        run_destinations=run_dest,
+    )  # fmt: skip
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        status, body = _req(f"{url}/api/destinations", {"origin": "here"})
+        assert (status, body["options"][0]["name"]) == (200, "Springs")
+        assert _req(f"{url}/api/destinations", {"origin": "bad"})[0] == 400
+        # 2 a day, and errors count
+        assert _req(f"{url}/api/destinations", {"origin": "here"})[0] == 429
+    finally:
+        server.shutdown()
+        server.server_close()

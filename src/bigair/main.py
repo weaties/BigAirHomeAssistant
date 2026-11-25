@@ -189,6 +189,7 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
     from datetime import UTC, datetime
 
     from bigair import eia_io, google_io, weather_io
+    from bigair.dest_sources import load_ioverlander, load_public_land
     from bigair.fuel_sources import live_fuel_from_state
     from bigair.gpsd_io import current_fix
     from bigair.ha_discovery import FUEL_STATE_TOPIC
@@ -212,6 +213,9 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
     # POIs from the vault (#88): the Syncthing folder, mounted read-only.
     poi_dir = os.environ.get("POI_DIR", "")
     pois = (lambda: load_pois(Path(poi_dir))) if poi_dir else None
+    # Destination sources (#91): Dan's iOverlander exports and a public-land GeoJSON.
+    iover_dir = os.environ.get("IOVERLANDER_DIR", "")
+    land_file = os.environ.get("PUBLIC_LAND_FILE", "")
 
     return TripEdges(
         route=lambda o, d, via, avoid: google_io.compute_route(key, o, d, via, avoid),
@@ -224,6 +228,9 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
         position=position,
         pois=pois,
         drive_s=lambda o, d: google_io.drive_leg(key, o, d),
+        ioverlander=(lambda: load_ioverlander(Path(iover_dir))) if iover_dir else None,
+        public_land=(lambda: load_public_land(Path(land_file))) if land_file else None,
+        campgrounds=lambda bbox: google_io.search_campgrounds(key, bbox),
     )
 
 
@@ -337,6 +344,9 @@ def _planner(args: argparse.Namespace) -> int:
     from bigair.travel_rules import TravelRules, load_rules
     from bigair.trip_service import (
         TripError,
+        discover,
+        discover_request_from_json,
+        discover_to_json,
         plan_trip,
         pois_for_cached,
         request_from_json,
@@ -374,6 +384,11 @@ def _planner(args: argparse.Namespace) -> int:
             raise TripError(str(e)) from e
         return pois_for_cached(last, r, edges, rules)
 
+    def run_destinations(payload: dict[str, Any]) -> dict[str, Any]:
+        if edges is None:
+            raise TripError(f"{problem} on the Pi (deploy/.env)")
+        return discover_to_json(discover(discover_request_from_json(payload), edges, rules))
+
     server = make_server(
         args.host,
         args.port,
@@ -381,6 +396,7 @@ def _planner(args: argparse.Namespace) -> int:
         Path(args.cache),
         daily_limit=args.daily_limit,
         run_pois=run_pois,
+        run_destinations=run_destinations,
     )
     logger.info("trip planner on {}:{}", args.host, args.port)
     with contextlib.suppress(KeyboardInterrupt):

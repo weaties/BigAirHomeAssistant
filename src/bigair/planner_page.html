@@ -121,6 +121,15 @@
     <div class="status" id="status"></div>
   </form>
 
+  <div class="card" id="destcard">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Where next? <small class="muted" style="font-weight:normal">a spot for the next few nights</small></h2>
+      <button type="button" id="dest_go">Find destinations from “From”</button>
+    </div>
+    <div class="status" id="deststatus"></div>
+    <div class="scroll"><table id="dests"></table></div>
+  </div>
+
   <div id="results" class="hidden">
     <div id="banners"></div>
 
@@ -434,6 +443,54 @@ function renderDay() {
   lines.push(`<span class="note">Then stay ${d.stay_nights} nights. Short days are fine; ${d.max_day_mi} mi is a ceiling, not a target.</span>`);
   $("day").innerHTML = lines.map((l) => `<div style="margin-bottom:4px">${l}</div>`).join("");
 }
+
+// ---------- destination discovery (#91) ----------
+const SOURCE_LABEL = { poi: "your POI", ioverlander: "iOverlander", public_land: "public land", campground: "campground" };
+let dests = null;
+async function findDests() {
+  saveForm();
+  if (!$("origin").value) { $("deststatus").textContent = "Fill in From first (or tap 📍 Here)."; return; }
+  $("dest_go").disabled = true;
+  $("deststatus").textContent = "Searching… this routes up to 8 places, about 20 seconds.";
+  try {
+    const body = { origin: $("origin").value, depart: localIso($("depart").value), utc_offset_min: -new Date().getTimezoneOffset(), reach: reach() };
+    const r = await fetch("api/destinations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    dests = j;
+    renderDests();
+  } catch (e) {
+    $("deststatus").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
+  } finally {
+    $("dest_go").disabled = false;
+  }
+}
+function renderDests() {
+  const j = dests;
+  $("deststatus").innerHTML = (j.warnings || []).map((w) => `<div class="banner warn">${esc(w)}</div>`).join("") +
+    (j.options.length ? `<span class="note">Leaving ${fmtTime(new Date(j.depart))}. Best first; a closer, richer place beats a far one.</span>` : "");
+  if (!j.options.length) { $("dests").innerHTML = ""; return; }
+  const rows = j.options.map((o, i) => {
+    const why = [...o.dest_reasons, ...(o.stops.length ? [`stops on the way +${o.stops_score}`] : [])].join(" · ") || "base score";
+    const stops = o.stops.length ? `<div class="note">On the way: ${o.stops.map(esc).join(", ")} (+${hm(o.stops_min)})</div>` : "";
+    const fit = o.fits ? "" : `<div class="banner err" style="margin-top:4px">${o.problems.map(esc).join("; ")}</div>`;
+    return `<tr><td><b>${i + 1}</b></td>
+      <td><b>${esc(o.name)}</b> <span class="tag">${SOURCE_LABEL[o.source] || esc(o.source)}</span>${o.kind ? `<span class="tag">${esc(o.kind)}</span>` : ""}
+        ${o.note ? `<div class="note">${esc(o.note)}</div>` : ""}${stops}${fit}</td>
+      <td class="num">${o.road_mi} mi<div class="note">${hm(o.drive_min)} · in ${fmtTime(new Date(o.arrive))}</div></td>
+      <td class="num"><span title="${esc(why)}">${o.total}</span></td>
+      <td><button type="button" data-i="${i}" ${o.fits ? "" : "disabled"}>Plan this leg</button></td></tr>`;
+  }).join("");
+  $("dests").innerHTML = `<tr><th></th><th>Place</th><th class="num">Drive</th><th class="num">Score</th><th></th></tr>${rows}`;
+  $("dests").querySelectorAll("button[data-i]").forEach((b) => b.addEventListener("click", () => {
+    const o = dests.options[Number(b.dataset.i)];
+    $("destination").value = `${o.lat},${o.lon}`;
+    $("via").value = "";
+    setMode("slow");
+    $("form").requestSubmit();
+  }));
+}
+$("dest_go").addEventListener("click", findDests);
 
 // ---------- points of interest (#88) ----------
 function reach() { return { mode: $("reach_mode").value, hours: Number($("reach_hours").value) || 3 }; }

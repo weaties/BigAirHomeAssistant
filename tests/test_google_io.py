@@ -42,3 +42,33 @@ def test_compute_route_can_avoid_highways(monkeypatch: pytest.MonkeyPatch) -> No
     google_io.compute_route("k", "A", "B", [], avoid_highways=True)
     assert "routeModifiers" not in sent[0]
     assert sent[1]["routeModifiers"] == {"avoidHighways": True}
+
+
+def test_campground_search_is_restricted_to_the_box(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_post(url: str, key: str, fields: str, body: dict[str, Any]) -> dict[str, Any]:
+        sent.append((url, fields, body))
+        return {
+            "places": [
+                {
+                    "displayName": {"text": "Lake CG"},
+                    "location": {"latitude": 41.1, "longitude": -111.2},
+                    "formattedAddress": "Lake Rd",
+                },
+                {"displayName": {"text": "No location"}},
+            ]
+        }  # fmt: skip
+
+    monkeypatch.setattr(google_io, "_post", fake_post)
+    camps = google_io.search_campgrounds("k", (39.0, -113.0, 43.0, -109.0))
+    assert [(c.name, c.lat, c.lon, c.source, c.note) for c in camps] == [
+        ("Lake CG", 41.1, -111.2, "campground", "Lake Rd")
+    ]
+    url, fields, body = sent[0]
+    assert url == google_io.PLACES_URL
+    assert body["includedType"] == "campground"
+    rect = body["locationRestriction"]["rectangle"]
+    assert rect["low"] == {"latitude": 39.0, "longitude": -113.0}
+    assert rect["high"] == {"latitude": 43.0, "longitude": -109.0}
+    assert "places.location" in fields

@@ -20,6 +20,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 if TYPE_CHECKING:
+    from bigair.destinations import Destination
     from bigair.fuel_sources import Segment
 
 ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
@@ -101,6 +102,44 @@ def drive_leg(
         raise ValueError("no route to the POI")
     r = routes[0]
     return float(str(r.get("duration", "0s")).rstrip("s")), float(r["distanceMeters"]) / M_PER_MI
+
+
+CAMP_FIELDS = "places.displayName,places.location,places.formattedAddress"
+
+
+def search_campgrounds(key: str, bbox: tuple[float, float, float, float]) -> list[Destination]:
+    """Campgrounds in a (south, west, north, east) box: discovery's fallback (#91)."""
+    from bigair.destinations import Destination
+
+    s, w, n, e = bbox
+    body: dict[str, Any] = {
+        "textQuery": "campground",
+        "includedType": "campground",
+        "pageSize": 20,
+        "locationRestriction": {
+            "rectangle": {
+                "low": {"latitude": s, "longitude": w},
+                "high": {"latitude": n, "longitude": e},
+            }
+        },
+    }
+    out: list[Destination] = []
+    for p in _post(PLACES_URL, key, CAMP_FIELDS, body).get("places") or []:
+        loc = p.get("location") or {}
+        if "latitude" not in loc or "longitude" not in loc:
+            continue
+        name = (p.get("displayName") or {}).get("text") or "Campground"
+        out.append(
+            Destination(
+                name,
+                float(loc["latitude"]),
+                float(loc["longitude"]),
+                "campground",
+                None,
+                p.get("formattedAddress"),
+            )  # fmt: skip
+        )
+    return out
 
 
 def search_along(
