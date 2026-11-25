@@ -633,6 +633,14 @@ def result_to_json(r: TripResult) -> dict[str, Any]:
     }
 
 
+def _local(t: datetime | None, offset_min: int | None) -> datetime | None:
+    """Read a time in the phone's UTC offset: the page sends UTC ("…Z"), and slow
+    mode's 10:00 / 15:00 must mean local time, not UTC (#90)."""
+    if t is None or offset_min is None:
+        return t
+    return t.astimezone(timezone(timedelta(minutes=offset_min)))
+
+
 def _num(v: object, name: str) -> float:
     try:
         return float(v)  # type: ignore[arg-type]
@@ -666,7 +674,8 @@ def request_from_json(d: dict[str, Any]) -> TripRequest:
     mode = str(d.get("mode") or "quick")
     if mode not in MODES:
         raise TripError("mode must be quick or slow")
-    offset = d.get("utc_offset_min")
+    offset_in = d.get("utc_offset_min")
+    offset = None if offset_in in (None, "") else round(_num(offset_in, "utc_offset_min"))
     reach_in = d.get("reach")
     try:
         reach = reach_from_json(reach_in if isinstance(reach_in, dict) else None)
@@ -678,8 +687,8 @@ def request_from_json(d: dict[str, Any]) -> TripRequest:
         via=tuple(str(v).strip() for v in (d.get("via") or []) if str(v).strip()),
         round_trip=bool(d.get("round_trip")),
         local_mi=_num(d.get("local_mi", 20.0), "local_mi"),
-        depart=when("depart"),
-        return_depart=when("return_depart"),
+        depart=_local(when("depart"), offset),
+        return_depart=_local(when("return_depart"), offset),
         reserves=reserves,
         discounts=(
             {str(k): _num(v, "discount") for k, v in discounts.items()}
@@ -690,5 +699,5 @@ def request_from_json(d: dict[str, Any]) -> TripRequest:
         mpg=_num(d["mpg"], "mpg") if d.get("mpg") not in (None, "") else None,
         reach=reach,
         mode=mode,
-        utc_offset_min=None if offset in (None, "") else round(_num(offset, "utc_offset_min")),
+        utc_offset_min=offset,
     )
