@@ -28,7 +28,7 @@ DEPART = datetime(2027, 5, 10, 10, 0, tzinfo=timezone(timedelta(hours=-7)))  # 1
 ORIGIN = (40.0, -111.0)
 
 
-def _route(o: str, d: str, via: list[str], avoid: bool) -> dict[str, Any]:
+def _route(o: str, d: str, via: list[str], avoid: bool, alt: bool = False) -> dict[str, Any]:
     a = tuple(float(x) for x in o.split(","))
     b = tuple(float(x) for x in d.split(","))
     pts = [(a[0] + (b[0] - a[0]) * i / 10, a[1] + (b[1] - a[1]) * i / 10) for i in range(11)]
@@ -118,7 +118,7 @@ def test_discover_routes_at_most_the_cap() -> None:
     ]
     calls: list[str] = []
 
-    def route(o: str, d: str, via: list[str], avoid: bool) -> dict[str, Any]:
+    def route(o: str, d: str, via: list[str], avoid: bool, alt: bool) -> dict[str, Any]:
         calls.append(d)
         return _route(o, d, via, avoid)
 
@@ -168,7 +168,7 @@ def test_discover_reads_a_utc_departure_in_the_phones_time_zone() -> None:
 def test_chain_plan_sketches_legs_and_snaps_to_destinations() -> None:
     seen: list[tuple[str, str, bool]] = []
 
-    def route(o: str, d: str, via: list[str], avoid: bool) -> dict[str, Any]:
+    def route(o: str, d: str, via: list[str], avoid: bool, alt: bool) -> dict[str, Any]:
         seen.append((o, d, avoid))
         return _route(o, "44.0,-111.0", via, avoid)  # ~276 crow mi → ~331 road mi
 

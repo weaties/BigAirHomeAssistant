@@ -143,6 +143,7 @@ src/bigair/          # all Python; one small module per concern
   travel_rules.py / day_plan.py  # slow mode: rules, day budget, POI score, proposal (#90)
   destinations.py / dest_sources.py  # where next: candidates, ranking; iOverlander + public land (#91)
   chain.py           #   rough chain of legs and stays to a far goal (#92)
+  byways.py          #   scenic byway miles on a route; most scenic alternative (#100)
   claude_agent.py    #   Claude tool loop, spend ledger, proposals (#89)
   claude_tools.py / claude_service.py / claude_io.py  # planner tools + state; SDK edge
   mqtt_io.py / influx_io.py   # edges (M1)

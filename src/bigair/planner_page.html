@@ -455,6 +455,7 @@ function renderDay() {
   const pr = (plan.pois && plan.pois.proposal) || d.proposal;
   const lines = [`Leave <b>${fmtTime(new Date(d.depart))}</b>, ${end} <b>${fmtTime(new Date(d.end))}</b>${sun}: a <b>${hm(d.window_min)}</b> window.`,
     `Driving straight through: ${hm(d.drive_min)}, ${d.route_mi} of ${d.max_day_mi} mi max (no interstates).`];
+  if (d.byways) lines.push(d.byways.miles ? `🛣️ Route: ${esc(d.byways.why)}.` : `Route: ${esc(d.byways.why)}.`);
   if (!pr.fits) {
     lines.push(`<div class="banner err">This leg doesn't fit: ${pr.problems.map(esc).join("; ")}. Pick a closer destination, or leave earlier.</div>`);
   } else if (pr.chosen.length) {
