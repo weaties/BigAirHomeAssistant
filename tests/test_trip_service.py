@@ -395,3 +395,22 @@ def test_request_from_json_reads_mode_and_offset() -> None:
     assert request_from_json({"origin": "A", "destination": "B"}).mode == "quick"
     with pytest.raises(TripError, match="mode"):
         request_from_json({"origin": "A", "destination": "B", "mode": "warp"})
+
+
+def test_a_utc_departure_is_read_in_the_phones_time_zone() -> None:
+    # The page sends "…Z" (toISOString) plus its offset; 15:00 must mean 15:00 local.
+    req = request_from_json(
+        {
+            "origin": "A",
+            "destination": "B",
+            "mode": "slow",
+            "depart": "2026-11-25T17:00:00Z",  # 09:00 PST
+            "utc_offset_min": -480,
+        }
+    )
+    assert req.depart is not None
+    assert req.depart.utcoffset() == timedelta(hours=-8)
+    assert req.depart.hour == 9
+    r = plan_trip(req, _poi_edges())
+    assert r.day is not None
+    assert r.day.budget.window_min == pytest.approx(360)  # 09:00 → 15:00 PST

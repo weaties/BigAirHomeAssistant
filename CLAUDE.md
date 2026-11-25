@@ -141,6 +141,7 @@ src/bigair/          # all Python; one small module per concern
   gpsd_io.py         #   edge: gpsd JSON client
   poi.py / poi_near.py  # vault POI notes → Poi; POIs in reach of a planned route (#88)
   travel_rules.py / day_plan.py  # slow mode: rules, day budget, POI score, proposal (#90)
+  destinations.py / dest_sources.py  # where next: candidates, ranking; iOverlander + public land (#91)
   mqtt_io.py / influx_io.py   # edges (M1)
   main.py            #   wiring only
 tests/               # pytest, runs anywhere, no hardware

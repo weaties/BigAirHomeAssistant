@@ -152,15 +152,21 @@ def score_poi(
         if w:
             score += w
             reasons.append(f"{tag} ({_signed(w)})")
-    if temp_f is not None:
-        lo, hi = rules.temp_band_f
-        if lo <= temp_f <= hi:
-            score += 0.25
-            reasons.append(f"{temp_f:.0f}°F at ETA (+0.25)")
-        else:
-            score -= 0.25
-            reasons.append(f"{temp_f:.0f}°F at ETA, outside {lo:g}–{hi:g}°F (-0.25)")
+    d, why = weather_term(temp_f, rules)
+    if why:
+        score += d
+        reasons.append(why)
     return score, reasons
+
+
+def weather_term(temp_f: float | None, rules: TravelRules) -> tuple[float, str | None]:
+    """±0.25 for the forecast at the ETA inside / outside the band; 0 if unknown."""
+    if temp_f is None:
+        return 0.0, None
+    lo, hi = rules.temp_band_f
+    if lo <= temp_f <= hi:
+        return 0.25, f"{temp_f:.0f}°F at ETA (+0.25)"
+    return -0.25, f"{temp_f:.0f}°F at ETA, outside {lo:g}–{hi:g}°F (-0.25)"
 
 
 # --- the proposal -------------------------------------------------------------------
