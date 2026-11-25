@@ -47,6 +47,7 @@ class ClaudeApi(Protocol):
     def status(self) -> dict[str, Any]: ...
     def explain(self) -> dict[str, Any]: ...
     def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]: ...
+    def last_briefing(self) -> dict[str, Any] | None: ...
     def proposals(self) -> list[dict[str, Any]]: ...
     def decide(self, pid: str, accept: bool) -> dict[str, Any]: ...
 
@@ -119,6 +120,12 @@ def make_server(
                 self._json(200, claude.status())
             elif claude is not None and path == "/api/claude/proposals":
                 self._json(200, claude.proposals())
+            elif claude is not None and path == "/api/claude/briefing":
+                last = claude.last_briefing()
+                if last is None:
+                    self._json(404, {"error": "no briefing yet"})
+                else:
+                    self._json(200, last)
             elif path == "/health":
                 self._send(200, b"ok", "text/plain")
             elif path == "/api/plan/last":

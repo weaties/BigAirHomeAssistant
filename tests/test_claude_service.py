@@ -291,3 +291,76 @@ def test_chat_messages_are_validated(bad: list[dict[str, str]]) -> None:
 def test_chat_is_disabled_without_a_key(tmp_path: Path) -> None:
     svc = ClaudeService(None, _deps(), TravelRules(), tmp_path, 25.0, lambda: NOW)
     assert svc.chat([{"role": "user", "content": "hi"}])["stop"] == "disabled"
+
+
+# --- ask the van and the evening briefing (#94) ------------------------------------
+
+
+def test_telemetry_tools_validate_before_querying() -> None:
+    ran: list[tuple[str, str]] = []
+
+    def query(db: str, q: str) -> dict[str, Any]:
+        ran.append((db, q))
+        series = {"name": "fuel", "columns": ["time", "mean"],
+                  "values": [["2026-11-24T00:00:00Z", 13.25]]}  # fmt: skip
+        return {"results": [{"series": [series]}]}
+
+    tools = _tools(telemetry=query)
+    assert "fuel (tag method)" in tools["telemetry_schema"].handler(CTX, {})["schema"]
+    q = "SELECT mean(mpg_rolling) FROM fuel WHERE time > now() - 1d"
+    ok = tools["query_telemetry"].handler(CTX, {"db": "van_raw", "influxql": q})
+    assert ok["series"][0]["values"] == [["2026-11-24T00:00:00Z", 13.25]]
+    bad = tools["query_telemetry"].handler(
+        CTX, {"db": "van_raw", "influxql": "DROP MEASUREMENT fuel"}
+    )
+    assert "error" in bad and len(ran) == 1  # never sent
+    other = tools["query_telemetry"].handler(
+        CTX, {"db": "_internal", "influxql": "SHOW MEASUREMENTS"}
+    )
+    assert "error" in other
+
+
+def test_without_telemetry_there_are_no_telemetry_tools() -> None:
+    assert "query_telemetry" not in _tools()
+
+
+def test_briefing_is_stored_and_published(tmp_path: Path) -> None:
+    published: list[dict[str, Any]] = []
+    text = "Tomorrow: 180 mi via Kebler Pass, soak at the Springs."
+    svc = _svc(tmp_path, lambda p: _text_reply(text))
+    svc.publish = published.append
+    out = svc.briefing(base_url="http://bigair-ha.local:8092/")
+    assert out["stop"] == "done"
+    saved = json.loads((tmp_path / "claude-briefing.json").read_text())
+    assert saved["date"] == "2026-11-25" and saved["text"].startswith("Tomorrow")
+    assert published == [
+        {
+            "title": "Tomorrow's drive",
+            "message": "Tomorrow: 180 mi via Kebler Pass, soak at the Springs.",
+            "url": "http://bigair-ha.local:8092/",
+        }
+    ]
+    assert svc.last_briefing()["text"].startswith("Tomorrow")
+
+
+def test_briefing_offline_is_recorded_but_not_published(tmp_path: Path) -> None:
+    published: list[dict[str, Any]] = []
+
+    def offline(p: dict[str, Any]) -> dict[str, Any]:
+        raise ClaudeOffline("no internet")
+
+    svc = _svc(tmp_path, offline)
+    svc.publish = published.append
+    out = svc.briefing(base_url="http://x/")
+    assert out["stop"] == "offline"
+    assert published == []
+    assert json.loads((tmp_path / "claude-briefing.json").read_text())["date"] == "2026-11-25"
+
+
+def test_long_briefings_are_trimmed_for_the_notification(tmp_path: Path) -> None:
+    published: list[dict[str, Any]] = []
+    svc = _svc(tmp_path, lambda p: _text_reply("word " * 200))
+    svc.publish = published.append
+    svc.briefing(base_url="http://x/")
+    assert len(published[0]["message"]) <= 240
+    assert published[0]["message"].endswith("…")

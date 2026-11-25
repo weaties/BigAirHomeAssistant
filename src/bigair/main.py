@@ -359,9 +359,10 @@ def _fuel_plan(args: argparse.Namespace) -> int:
 def _claude_service(edges: TripEdges | None, rules: TravelRules, cache: Path) -> ClaudeService:
     """Claude for the planner (#89): disabled (but answering status) without a key."""
     import asyncio
+    import json
     from datetime import UTC, datetime
 
-    from bigair import claude_io, weather_io
+    from bigair import claude_io, influxql_io, mqtt_io, weather_io
     from bigair.claude_service import ClaudeService
     from bigair.claude_tools import ToolDeps, forecast_from
     from bigair.dest_sources import load_ioverlander, load_public_land
@@ -390,6 +391,10 @@ def _claude_service(edges: TripEdges | None, rules: TravelRules, cache: Path) ->
         out = load_ioverlander(Path(iover_dir))[0] if iover_dir else []
         return out + (load_public_land(Path(land_file))[0] if land_file else [])
 
+    # "Ask the van" (#94): InfluxQL over the read-only Grafana token, if there is one.
+    influx_token = os.environ.get("INFLUX_GRAFANA_TOKEN", "")
+    telemetry = (lambda db, q: influxql_io.query(influx_token, db, q)) if influx_token else None
+
     deps = ToolDeps(
         position=position,
         pois=lambda: load_pois(poi_dir)[0],
@@ -397,10 +402,42 @@ def _claude_service(edges: TripEdges | None, rules: TravelRules, cache: Path) ->
         last_plan=last_plan,
         forecast=forecast_from(weather_io.fetch_forecasts),
         places=places,
+        telemetry=telemetry,
     )
     send = claude_io.make_send(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
     cap = float(os.environ.get("CLAUDE_MONTHLY_CAP_USD") or 25.0)
-    return ClaudeService(send, deps, rules, cache.parent, cap, lambda: datetime.now(UTC))
+    svc = ClaudeService(send, deps, rules, cache.parent, cap, lambda: datetime.now(UTC))
+    mqtt_host = os.environ.get("MQTT_HOST", "localhost")
+
+    def publish(msg: dict[str, Any]) -> None:
+        payload = json.dumps(msg)
+        asyncio.run(mqtt_io.publish_once(mqtt_host, 1883, BRIEFING_TOPIC, payload))
+
+    svc.publish = publish
+    return svc
+
+
+BRIEFING_TOPIC = "bigair/claude/briefing"
+
+
+def _briefing_loop(svc: ClaudeService, at: tuple[int, int], url: str) -> None:
+    """Once a minute: send tonight's briefing when it's due (#94). Never raises."""
+    import time
+    from datetime import datetime
+
+    from loguru import logger
+
+    from bigair.telemetry import briefing_due
+
+    while True:
+        try:
+            last = svc.last_briefing() or {}
+            if briefing_due(datetime.now().astimezone(), at, last.get("date")):
+                out = svc.briefing(url)
+                logger.info("evening briefing: {}", out.get("stop"))
+        except Exception as e:  # keep the loop alive; the planner must keep serving
+            logger.warning("evening briefing failed: {}", e)
+        time.sleep(60)
 
 
 def _planner(args: argparse.Namespace) -> int:
@@ -465,6 +502,17 @@ def _planner(args: argparse.Namespace) -> int:
         return chain_to_json(chain_plan(chain_request_from_json(payload), edges, rules))
 
     claude = _claude_service(edges, rules, Path(args.cache))
+    # Evening briefing (#94): BRIEFING_TIME (local, HH:MM; empty = off).
+    btime = os.environ.get("BRIEFING_TIME", "19:00").strip()
+    if claude.send is not None and btime:
+        import threading
+
+        h, m = (int(x) for x in btime.split(":", 1))
+        url = os.environ.get("PLANNER_URL", "http://bigair-ha.local:8092/")
+        threading.Thread(
+            target=_briefing_loop, args=(claude, (h, m), url), daemon=True, name="briefing"
+        ).start()
+        logger.info("evening briefing at {} local", btime)
 
     server = make_server(
         args.host,

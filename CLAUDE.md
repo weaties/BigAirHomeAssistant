@@ -146,6 +146,7 @@ src/bigair/          # all Python; one small module per concern
   byways.py          #   scenic byway miles on a route; most scenic alternative (#100)
   claude_agent.py    #   Claude tool loop, spend ledger, proposals (#89)
   claude_tools.py / claude_service.py / claude_io.py  # planner tools + state; SDK edge
+  telemetry.py / influxql_io.py  # ask the van: read-only InfluxQL checks; briefing schedule (#94)
   mqtt_io.py / influx_io.py   # edges (M1)
   main.py            #   wiring only
 tests/               # pytest, runs anywhere, no hardware

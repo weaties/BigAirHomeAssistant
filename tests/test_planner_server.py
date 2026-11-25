@@ -304,3 +304,21 @@ def test_claude_chat_endpoint(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_claude_briefing_endpoint(tmp_path: Path) -> None:
+    class Briefed(_FakeClaude):
+        def last_briefing(self) -> dict[str, Any] | None:
+            return {"date": "2026-11-25", "text": "Tomorrow: 180 mi."}
+
+    server = make_server(
+        "127.0.0.1", 0, lambda p: {}, tmp_path / "plan.json", 2, lambda: NOW, claude=Briefed()
+    )
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        assert _req(f"{url}/api/claude/briefing")[1]["text"] == "Tomorrow: 180 mi."
+    finally:
+        server.shutdown()
+        server.server_close()

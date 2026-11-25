@@ -38,6 +38,16 @@ EXPLAIN = (
 )
 
 
+BRIEFING = (
+    "Write tonight's briefing for tomorrow's drive, for a phone notification: at most three "
+    "short sentences, under 240 characters, no lists. If last_plan has a plan, cover the "
+    "route and miles, the best stop on the way, the weather that matters (weather_at), and "
+    "where we'll sleep. If there's no plan, suggest in one line where we could head next "
+    "from where the van is (find_destinations within the daily limit). Don't propose a route."
+)
+BRIEFING_TITLE = "Tomorrow's drive"
+NOTIFY_MAX_CHARS = 240
+
 MAX_CHAT_MESSAGES = 24
 MAX_CHAT_CHARS = 4000
 
@@ -90,6 +100,9 @@ class ClaudeService:
         self.cap_usd = cap_usd
         self.now = now
         self.lock = threading.Lock()
+        self.briefing_path = state_dir / "claude-briefing.json"
+        self.publish: Callable[[dict[str, Any]], None] | None = None
+        """Sends the briefing to the phone (MQTT → HA notification); set by main."""
 
     # --- state ----------------------------------------------------------------
 
@@ -130,6 +143,28 @@ class ClaudeService:
         if self.send is None:
             return self._disabled()
         return self._ask(messages, "chat")
+
+    def last_briefing(self) -> dict[str, Any] | None:
+        return self._read(self.briefing_path)
+
+    def briefing(self, base_url: str) -> dict[str, Any]:
+        """Tonight's briefing (#94): stored for the page, and sent to the phone."""
+        if self.send is None:
+            return self._disabled()
+        out = self._ask([{"role": "user", "content": BRIEFING}], "briefing")
+        record = {
+            "date": self.now().astimezone().date().isoformat(),
+            "generated": self.now().isoformat(),
+            "text": out["text"],
+            "stop": out["stop"],
+        }
+        write_state(self.briefing_path, record, durable=False)
+        if out["stop"] in ("done", "turns", "max_tokens") and self.publish is not None:
+            text = " ".join(str(out["text"]).split())
+            if len(text) > NOTIFY_MAX_CHARS:
+                text = text[: NOTIFY_MAX_CHARS - 1].rsplit(" ", 1)[0] + "…"
+            self.publish({"title": BRIEFING_TITLE, "message": text, "url": base_url})
+        return out
 
     @staticmethod
     def _disabled() -> dict[str, Any]:
