@@ -230,3 +230,52 @@ def test_chain_endpoint(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+# --- Claude (#89) ------------------------------------------------------------------
+
+
+class _FakeClaude:
+    def __init__(self) -> None:
+        self.decided: list[tuple[str, bool]] = []
+
+    def status(self) -> dict[str, Any]:
+        return {"enabled": True, "spent_usd": 1.5, "cap_usd": 25.0}
+
+    def explain(self) -> dict[str, Any]:
+        return {"text": "Because.", "stop": "done", "proposals": [{"id": "p1"}]}
+
+    def proposals(self) -> list[dict[str, Any]]:
+        return [{"id": "p1", "status": "open"}]
+
+    def decide(self, pid: str, accept: bool) -> dict[str, Any]:
+        if pid != "p1":
+            raise KeyError(pid)
+        self.decided.append((pid, accept))
+        return {"id": pid, "status": "accepted" if accept else "dismissed"}
+
+
+def test_claude_endpoints(tmp_path: Path) -> None:
+    fake = _FakeClaude()
+    server = make_server(
+        "127.0.0.1", 0, lambda p: {}, tmp_path / "plan.json", 2, lambda: NOW, claude=fake
+    )
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        assert _req(f"{url}/api/claude/status")[1]["spent_usd"] == 1.5
+        status, body = _req(f"{url}/api/claude/explain", {})
+        assert (status, body["text"]) == (200, "Because.")
+        assert _req(f"{url}/api/claude/proposals")[1] == [{"id": "p1", "status": "open"}]
+        status, body = _req(f"{url}/api/claude/proposals/p1/accept", {})
+        assert (status, body["status"]) == (200, "accepted")
+        assert _req(f"{url}/api/claude/proposals/nope/dismiss", {})[0] == 404
+        assert fake.decided == [("p1", True)]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_claude_endpoints_absent_without_claude(ok_url: str) -> None:
+    assert _req(f"{ok_url}/api/claude/status")[0] == 404

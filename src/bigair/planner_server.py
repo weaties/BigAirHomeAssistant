@@ -7,6 +7,9 @@
                            a new reach (#88), without re-planning, and update the cache
 - POST /api/destinations → where to spend the next nights, from a start (#91)
 - POST /api/chain        → a rough chain of legs and stays to a far goal (#92)
+- GET  /api/claude/status, POST /api/claude/explain, GET /api/claude/proposals,
+  POST /api/claude/proposals/<id>/accept|dismiss → Claude (#89). Explanations run
+  one at a time, are capped per day, and Claude's monthly spend cap applies.
 - GET  /health           → 200
 
 Plans call paid Google APIs, and the page is reachable from the van Wi-Fi and
@@ -23,7 +26,7 @@ import threading
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from loguru import logger
 
@@ -35,6 +38,16 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 MAX_BODY = 16_384
+CLAUDE_LIMIT_FACTOR = 5
+
+
+class ClaudeApi(Protocol):
+    def status(self) -> dict[str, Any]: ...
+    def explain(self) -> dict[str, Any]: ...
+    def proposals(self) -> list[dict[str, Any]]: ...
+    def decide(self, pid: str, accept: bool) -> dict[str, Any]: ...
+
+
 POI_LIMIT_FACTOR = 5
 
 
@@ -70,10 +83,13 @@ def make_server(
     run_pois: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
     run_destinations: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     run_chain: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    claude: ClaudeApi | None = None,
 ) -> ThreadingHTTPServer:
     limiter = _Limiter(daily_limit, now_fn)
     poi_limiter = _Limiter(daily_limit * POI_LIMIT_FACTOR, now_fn)
     dest_limiter = _Limiter(daily_limit, now_fn)
+    claude_limiter = _Limiter(daily_limit * CLAUDE_LIMIT_FACTOR, now_fn)
+    claude_busy = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
@@ -96,6 +112,10 @@ def make_server(
             path = self.path.split("?", 1)[0]
             if path in ("/", "/index.html"):
                 self._send(200, page_html(), "text/html; charset=utf-8")
+            elif claude is not None and path == "/api/claude/status":
+                self._json(200, claude.status())
+            elif claude is not None and path == "/api/claude/proposals":
+                self._json(200, claude.proposals())
             elif path == "/health":
                 self._send(200, b"ok", "text/plain")
             elif path == "/api/plan/last":
@@ -144,6 +164,9 @@ def make_server(
             if path == "/api/chain" and run_chain is not None:
                 self._search(run_chain, "chain sketch")
                 return
+            if claude is not None and path.startswith("/api/claude/"):
+                self._claude(path)
+                return
             if path != "/api/plan":
                 self._json(404, {"error": "not found"})
                 return
@@ -173,6 +196,32 @@ def make_server(
                 self._json(200, result)
             finally:
                 limiter.busy.release()
+
+        def _claude(self, path: str) -> None:
+            assert claude is not None
+            parts = path.strip("/").split("/")  # api claude proposals <id> accept
+            if len(parts) == 5 and parts[2] == "proposals" and parts[4] in ("accept", "dismiss"):
+                try:
+                    self._json(200, claude.decide(parts[3], parts[4] == "accept"))
+                except KeyError:
+                    self._json(404, {"error": "no such open proposal"})
+                return
+            if path != "/api/claude/explain":
+                self._json(404, {"error": "not found"})
+                return
+            if not claude_busy.acquire(blocking=False):
+                self._json(409, {"error": "Claude is already answering"})
+                return
+            try:
+                if not claude_limiter.take():
+                    self._json(429, {"error": "daily limit of Claude questions reached"})
+                    return
+                self._json(200, claude.explain())
+            except Exception as e:  # an upstream API failed; say so, keep serving
+                logger.warning("Claude failed: {}", e)
+                self._json(502, {"error": f"Claude failed: {e}"})
+            finally:
+                claude_busy.release()
 
         def _search(self, run: Callable[[dict[str, Any]], dict[str, Any]], what: str) -> None:
             payload = self._body()

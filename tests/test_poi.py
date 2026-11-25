@@ -122,3 +122,14 @@ def test_load_pois_missing_folder_is_a_warning_not_a_crash(tmp_path: Path) -> No
     assert pois == []
     assert len(warnings) == 1
     assert "not found" in warnings[0]
+
+
+def test_read_note_body_finds_a_note_by_its_poi_name(tmp_path: Path) -> None:
+    from bigair.poi import read_note_body
+
+    (tmp_path / "file-name-differs.md").write_text(FULL)
+    body = read_note_body(tmp_path, "Example Canyon - Rimtown")
+    assert body is not None
+    assert body.startswith("# Example Canyon - Rimtown")
+    assert "location:" not in body  # frontmatter stripped
+    assert read_note_body(tmp_path, "Nope") is None

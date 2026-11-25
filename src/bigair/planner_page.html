@@ -169,6 +169,16 @@
       </div>
     </div>
 
+    <div class="card hidden" id="claudecard">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">Claude <small class="muted" id="claudestatus" style="font-weight:normal"></small></h2>
+        <button type="button" id="claude_go">Why this way?</button>
+      </div>
+      <div id="claudeanswer" style="margin-top:8px;white-space:pre-wrap"></div>
+      <div id="claudeprops"></div>
+      <div class="note">Claude only suggests; nothing changes until you accept. It sees your POI notes, this plan, the van's position and the forecast.</div>
+    </div>
+
     <div class="card hidden" id="daycard">
       <h2>Today's drive (slow mode)</h2>
       <div id="day"></div>
@@ -396,6 +406,9 @@ function render(p) {
   if (p.day && p.day.proposal) adoptProposal(p.day.proposal);
   renderDay();
   renderPois();
+  $("claudeanswer").textContent = "";
+  claudeStatus();
+  fetch("api/claude/proposals").then((r) => (r.ok ? r.json() : [])).then(renderProposals).catch(() => {});
   renderAlerts();
   $("unpricedcard").classList.toggle("hidden", !p.unpriced.length);
   $("unpriced").innerHTML = p.unpriced.map((u) => `<div>${esc(u.name)}${u.where ? ", " + esc(u.where) : ""} <span class="muted">· mi ${roadMile(p, u.mile).toFixed(0)}</span></div>`).join("");
@@ -500,6 +513,58 @@ function renderDests() {
   }));
 }
 $("dest_go").addEventListener("click", findDests);
+
+// ---------- Claude (#89) ----------
+async function claudeStatus() {
+  try {
+    const r = await fetch("api/claude/status");
+    if (!r.ok) return;
+    const st = await r.json();
+    $("claudestatus").textContent = st.enabled
+      ? `$${st.spent_usd.toFixed(2)} of $${st.cap_usd} this month` + (st.can_start ? "" : " · budget used up")
+      : "not set up (no API key on the Pi)";
+    $("claude_go").disabled = !st.enabled || !st.can_start;
+    if (plan) $("claudecard").classList.remove("hidden");
+  } catch { /* planner without Claude */ }
+}
+function renderProposals(list) {
+  $("claudeprops").innerHTML = list.map((p) => `<div class="banner warn" style="margin-top:8px">
+    <b>Claude suggests: ${esc(p.title)}</b><div class="note">${esc(p.reason)}</div>
+    <div class="note">${p.params.mode === "slow" ? "Slow" : "Quick"} · to ${esc(p.params.destination)}${p.params.via.length ? " · via " + p.params.via.map(esc).join("; ") : ""}</div>
+    <div class="row" style="margin-top:6px"><button type="button" data-acc="${esc(p.id)}" class="primary">Accept &amp; plan</button>
+    <button type="button" data-dis="${esc(p.id)}">Dismiss</button></div></div>`).join("");
+  $("claudeprops").querySelectorAll("button[data-acc]").forEach((b) => b.addEventListener("click", () => decide(b.dataset.acc, true, list)));
+  $("claudeprops").querySelectorAll("button[data-dis]").forEach((b) => b.addEventListener("click", () => decide(b.dataset.dis, false, list)));
+}
+async function decide(id, accept, list) {
+  const r = await fetch(`api/claude/proposals/${encodeURIComponent(id)}/${accept ? "accept" : "dismiss"}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json();
+  if (!r.ok) { $("claudeanswer").textContent = j.error || "That suggestion is gone."; return; }
+  renderProposals(list.filter((p) => p.id !== id));
+  if (accept) {
+    $("destination").value = j.params.destination;
+    $("via").value = (j.params.via || []).join("; ");
+    setMode(j.params.mode);
+    $("form").requestSubmit();
+  }
+}
+async function askWhy() {
+  $("claude_go").disabled = true;
+  $("claudeanswer").textContent = "Claude is looking at the plan…";
+  try {
+    const r = await fetch("api/claude/explain", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    $("claudeanswer").textContent = j.text;
+    const open = await (await fetch("api/claude/proposals")).json();
+    renderProposals(open);
+  } catch (e) {
+    $("claudeanswer").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
+  } finally {
+    claudeStatus();
+  }
+}
+$("claude_go").addEventListener("click", askWhy);
 
 // ---------- a chain of legs to a far goal (#92) ----------
 async function sketchChain() {

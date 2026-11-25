@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from bigair.claude_service import ClaudeService
     from bigair.fuel_sources import LiveFuel
+    from bigair.travel_rules import TravelRules
     from bigair.trip_service import TripEdges
 
 
@@ -336,6 +338,44 @@ def _fuel_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _claude_service(edges: TripEdges | None, rules: TravelRules, cache: Path) -> ClaudeService:
+    """Claude for the planner (#89): disabled (but answering status) without a key."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    from bigair import claude_io, weather_io
+    from bigair.claude_service import ClaudeService
+    from bigair.claude_tools import ToolDeps, forecast_from
+    from bigair.gpsd_io import current_fix
+    from bigair.poi import load_pois, read_note_body
+    from bigair.state_file import StateFileError, read_state
+
+    poi_dir = Path(os.environ.get("POI_DIR", "/poi"))
+
+    def position() -> tuple[float, float] | None:
+        if edges is not None and edges.position is not None:
+            return edges.position()
+        fix = asyncio.run(current_fix())
+        return (fix.lat, fix.lon) if fix else None
+
+    def last_plan() -> dict[str, Any] | None:
+        try:
+            return read_state(cache)
+        except StateFileError:
+            return None
+
+    deps = ToolDeps(
+        position=position,
+        pois=lambda: load_pois(poi_dir)[0],
+        read_note=lambda name: read_note_body(poi_dir, name),
+        last_plan=last_plan,
+        forecast=forecast_from(weather_io.fetch_forecasts),
+    )
+    send = claude_io.make_send(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    cap = float(os.environ.get("CLAUDE_MONTHLY_CAP_USD") or 25.0)
+    return ClaudeService(send, deps, rules, cache.parent, cap, lambda: datetime.now(UTC))
+
+
 def _planner(args: argparse.Namespace) -> int:
     from loguru import logger
 
@@ -397,6 +437,8 @@ def _planner(args: argparse.Namespace) -> int:
             raise TripError(f"{problem} on the Pi (deploy/.env)")
         return chain_to_json(chain_plan(chain_request_from_json(payload), edges, rules))
 
+    claude = _claude_service(edges, rules, Path(args.cache))
+
     server = make_server(
         args.host,
         args.port,
@@ -406,6 +448,7 @@ def _planner(args: argparse.Namespace) -> int:
         run_pois=run_pois,
         run_destinations=run_destinations,
         run_chain=run_chain,
+        claude=claude,
     )
     logger.info("trip planner on {}:{}", args.host, args.port)
     with contextlib.suppress(KeyboardInterrupt):

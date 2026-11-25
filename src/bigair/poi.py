@@ -117,6 +117,22 @@ def parse_poi(text: str, filename: str) -> Poi | None:
     )
 
 
+def read_note_body(folder: Path, name: str) -> str | None:
+    """The text of the note whose POI is called ``name`` (frontmatter stripped), or None."""
+    if not folder.is_dir():
+        return None
+    for path in sorted(folder.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        p = parse_poi(text, path.name)
+        if p is not None and p.name == name:
+            m = _FRONT.match(text)
+            return (m.group(2) if m else text).strip()
+    return None
+
+
 def load_pois(folder: Path) -> tuple[list[Poi], list[str]]:
     """Every POI note in ``folder`` (not recursive), sorted by name, plus warnings."""
     if not folder.is_dir():
