@@ -148,6 +148,7 @@ services:
       PLANNER_CACHE: /data/trip-plan.json
       PLANNER_DAILY_LIMIT: ${PLANNER_DAILY_LIMIT:-20}
       POI_DIR: /poi
+      TRAVEL_RULES: /data/travel-rules.yaml  # optional overrides (#90)
     volumes:
       - ../data/bigair:/data  # cached last plan; gitignored
       # Vault POI notes (#88), synced by Syncthing on the host; read-only here.

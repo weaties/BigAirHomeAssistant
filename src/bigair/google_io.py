@@ -30,6 +30,7 @@ PLACE_FIELDS = (
     "places.fuelOptions,routingSummaries,nextPageToken"
 )
 TIMEOUT_S = 20.0
+M_PER_MI = 1609.344
 
 
 class GoogleApiError(RuntimeError):
@@ -68,7 +69,9 @@ def waypoint(place: str) -> dict[str, Any]:
     return {"address": place}
 
 
-def compute_route(key: str, origin: str, destination: str, via: list[str]) -> dict[str, Any]:
+def compute_route(
+    key: str, origin: str, destination: str, via: list[str], avoid_highways: bool = False
+) -> dict[str, Any]:
     body: dict[str, Any] = {
         "origin": waypoint(origin),
         "destination": waypoint(destination),
@@ -77,21 +80,27 @@ def compute_route(key: str, origin: str, destination: str, via: list[str]) -> di
     }
     if via:
         body["intermediates"] = [waypoint(v) for v in via]
+    if avoid_highways:  # slow mode (#90): Google's nearest thing to "no interstates"
+        body["routeModifiers"] = {"avoidHighways": True}
     return _post(ROUTES_URL, key, ROUTE_FIELDS, body)
 
 
-def drive_seconds(key: str, origin: tuple[float, float], dest: tuple[float, float]) -> float:
-    """Driving time between two points, for a POI detour (#88)."""
+def drive_leg(
+    key: str, origin: tuple[float, float], dest: tuple[float, float]
+) -> tuple[float, float]:
+    """(seconds, road miles) between two points, for a POI detour (#88, #90)."""
     body: dict[str, Any] = {
         "origin": waypoint(f"{origin[0]},{origin[1]}"),
         "destination": waypoint(f"{dest[0]},{dest[1]}"),
         "travelMode": "DRIVE",
         "routingPreference": "TRAFFIC_UNAWARE",
     }
-    routes = _post(ROUTES_URL, key, "routes.duration", body).get("routes") or []
+    fields = "routes.duration,routes.distanceMeters"
+    routes = _post(ROUTES_URL, key, fields, body).get("routes") or []
     if not routes:
         raise ValueError("no route to the POI")
-    return float(str(routes[0].get("duration", "0s")).rstrip("s"))
+    r = routes[0]
+    return float(str(r.get("duration", "0s")).rstrip("s")), float(r["distanceMeters"]) / M_PER_MI
 
 
 def search_along(

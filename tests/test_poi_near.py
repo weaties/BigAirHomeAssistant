@@ -53,11 +53,11 @@ def fixed_drive(minutes: dict[tuple[float, float], float]) -> tuple[DriveTime, C
     """A drive-time edge that answers by destination, recording each call."""
     calls: Calls = []
 
-    def drive_s(origin: tuple[float, float], dest: tuple[float, float]) -> float:
+    def drive_s(origin: tuple[float, float], dest: tuple[float, float]) -> tuple[float, float]:
         calls.append((origin, dest))
         for (lat, lon), m in minutes.items():
             if abs(lat - dest[0]) < 1e-6 and abs(lon - dest[1]) < 1e-6:
-                return m * 60.0
+                return m * 60.0, m * 0.8  # 48 mph on the side roads
         raise AssertionError(f"unexpected lookup {dest}")
 
     return drive_s, calls
@@ -86,6 +86,7 @@ def test_detour_mode_uses_round_trip_drive_time_plus_reports_visit() -> None:
     assert h.status == "ok"
     assert h.one_way_min == pytest.approx(25.0)
     assert h.detour_min == pytest.approx(50.0)  # out and back to the join point
+    assert h.detour_mi == pytest.approx(40.0)  # 2 x 20 road miles
     assert h.mile == pytest.approx(75.0, abs=1.0)  # halfway along
     assert h.eta == datetime(2027, 5, 10, 18, 30, tzinfo=UTC)  # 90 min in
     assert h.in_season is True
@@ -133,7 +134,7 @@ def test_ahead_mode_caps_how_far_off_the_route() -> None:
 def test_failed_lookup_is_reported_without_a_number() -> None:
     p = poi("Flaky", 41.0, -110.3)
 
-    def drive(o: tuple[float, float], d: tuple[float, float]) -> float:
+    def drive(o: tuple[float, float], d: tuple[float, float]) -> tuple[float, float]:
         raise OSError("no internet")
 
     hits = near_route(ROUTE, DEPART, [p], Reach("detour", 3.0), drive)
@@ -141,6 +142,7 @@ def test_failed_lookup_is_reported_without_a_number() -> None:
     assert hits[0].status == "lookup_failed"
     assert hits[0].one_way_min is None
     assert hits[0].detour_min is None
+    assert hits[0].detour_mi is None
 
 
 def test_lookups_are_capped_nearest_first_and_the_rest_marked_unchecked() -> None:
@@ -177,10 +179,10 @@ def test_order_is_detour_then_rating_then_season_with_unknowns_last() -> None:
     rated_low = poi("Rated low", 41.5, -110.4, rating=2)
     flaky = poi("Flaky", 41.2, -110.1)
 
-    def drive(o: tuple[float, float], d: tuple[float, float]) -> float:
+    def drive(o: tuple[float, float], d: tuple[float, float]) -> tuple[float, float]:
         table = {(41.0, -110.2): 10.0, (40.5, -110.4): 30.0, (41.5, -110.4): 30.0}
         if d in table:
-            return table[d] * 60
+            return table[d] * 60, table[d]
         raise OSError("timeout")
 
     hits = near_route(ROUTE, DEPART, [flaky, rated_low, rated, quick], Reach("detour", 3.0), drive)

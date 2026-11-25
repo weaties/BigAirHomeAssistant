@@ -214,7 +214,7 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
     pois = (lambda: load_pois(Path(poi_dir))) if poi_dir else None
 
     return TripEdges(
-        route=lambda o, d, via: google_io.compute_route(key, o, d, via),
+        route=lambda o, d, via, avoid: google_io.compute_route(key, o, d, via, avoid),
         search=lambda seg, tok, q, typ: google_io.search_along(key, seg, tok, q, typ),
         now=lambda: datetime.now(UTC),
         eia=lambda: eia_io.fetch_diesel(eia_key),
@@ -223,7 +223,7 @@ def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
         fuel_state=fuel_state,
         position=position,
         pois=pois,
-        drive_s=lambda o, d: google_io.drive_seconds(key, o, d),
+        drive_s=lambda o, d: google_io.drive_leg(key, o, d),
     )
 
 
@@ -334,6 +334,7 @@ def _planner(args: argparse.Namespace) -> int:
 
     from bigair.planner_server import make_server
     from bigair.poi_near import reach_from_json
+    from bigair.travel_rules import TravelRules, load_rules
     from bigair.trip_service import (
         TripError,
         plan_trip,
@@ -350,10 +351,18 @@ def _planner(args: argparse.Namespace) -> int:
         problem = str(e)
         edges = None
 
+    # Dan's travel rules for slow mode (#90); a bad file is logged, not fatal.
+    rules_path = os.environ.get("TRAVEL_RULES", "")
+    try:
+        rules = load_rules(Path(rules_path) if rules_path else None)
+    except ValueError as e:
+        logger.error("travel rules ignored, using defaults: {}", e)
+        rules = TravelRules()
+
     def run(payload: dict[str, Any]) -> dict[str, Any]:
         if edges is None:
             raise TripError(f"{problem} on the Pi (deploy/.env)")
-        return result_to_json(plan_trip(request_from_json(payload), edges))
+        return result_to_json(plan_trip(request_from_json(payload), edges, rules))
 
     def run_pois(payload: dict[str, Any], last: dict[str, Any]) -> dict[str, Any]:
         if edges is None:
@@ -363,7 +372,7 @@ def _planner(args: argparse.Namespace) -> int:
             r = reach_from_json(reach if isinstance(reach, dict) else None)
         except ValueError as e:
             raise TripError(str(e)) from e
-        return pois_for_cached(last, r, edges)
+        return pois_for_cached(last, r, edges, rules)
 
     server = make_server(
         args.host,
