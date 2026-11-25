@@ -35,5 +35,14 @@ lovelace:        # the phone dash (#64), provisioned from git like Grafana
 # service names don't resolve for it: the broker is localhost:1883, not
 # "mosquitto". Containers on the Compose network (bigair) do use "mosquitto".
 
+# Public access through the Mac's Tailscale Funnel (#105, Decision #43): Funnel adds
+# X-Forwarded-For, which HA rejects unless it comes from a trusted proxy. The proxy's
+# tailnet address lives in secrets.yaml. A login lockout guards the public URL.
+http:
+  use_x_forwarded_for: true
+  trusted_proxies: !secret trusted_proxies
+  ip_ban_enabled: true
+  login_attempts_threshold: 5
+
 logger:
   default: warning
