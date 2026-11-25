@@ -232,6 +232,24 @@ syncthing_host() {
   echo "POI folder: $(cd "$dir" && pwd) — share it from the Mac as Send Only, accept here as Receive Only."
 }
 
+# Claude Code on the Pi (#89), for SSH sessions over Tailscale. Optional. Anthropic's
+# native installer puts `claude` in ~/.local/bin; logging in is interactive (run
+# `claude` once and follow the link). bigair's own Claude features use
+# ANTHROPIC_API_KEY instead and don't need this.
+claude_code_host() {
+  log "Claude Code (#89)"
+  if [[ "$(env_get CLAUDE_CODE_ENABLE)" != "true" ]]; then
+    echo "CLAUDE_CODE_ENABLE is not true in deploy/.env — skipping."
+    return
+  fi
+  if [[ -x "$HOME/.local/bin/claude" ]] || command -v claude >/dev/null; then
+    echo "Claude Code already installed."
+  else
+    curl -fsSL https://claude.ai/install.sh | bash
+  fi
+  echo "Log in once with: ~/.local/bin/claude   (then /login if it asks)"
+}
+
 # Dash preview (#62, Decision #37). The preview server has no key, so Compose
 # publishes it on 127.0.0.1 only and `tailscale serve` exposes it to the tailnet,
 # never the van LAN. `serve --bg` persists across reboots; re-running is a no-op.
@@ -413,6 +431,7 @@ secrets
 gps_host
 tailscale_host
 syncthing_host
+claude_code_host
 start_core
 provision_influx
 start_grafana

@@ -158,7 +158,7 @@ def test_lookups_are_capped_nearest_first_and_the_rest_marked_unchecked() -> Non
 def test_cached_lookups_are_reused() -> None:
     p = poi("Near", 41.0, -110.3)
     drive, calls = fixed_drive({(41.0, -110.3): 25.0})
-    cache: dict[tuple[float, float, float, float], float] = {}
+    cache: dict[tuple[float, float, float, float], tuple[float, float]] = {}
     near_route(ROUTE, DEPART, [p], Reach("detour", 3.0), drive, cache)
     near_route(ROUTE, DEPART, [p], Reach("each_way", 2.0), drive, cache)
     assert len(calls) == 1

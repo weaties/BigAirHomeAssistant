@@ -143,6 +143,8 @@ src/bigair/          # all Python; one small module per concern
   travel_rules.py / day_plan.py  # slow mode: rules, day budget, POI score, proposal (#90)
   destinations.py / dest_sources.py  # where next: candidates, ranking; iOverlander + public land (#91)
   chain.py           #   rough chain of legs and stays to a far goal (#92)
+  claude_agent.py    #   Claude tool loop, spend ledger, proposals (#89)
+  claude_tools.py / claude_service.py / claude_io.py  # planner tools + state; SDK edge
   mqtt_io.py / influx_io.py   # edges (M1)
   main.py            #   wiring only
 tests/               # pytest, runs anywhere, no hardware
@@ -525,3 +527,15 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     the nearest route point, which errs long. A missing visit time or failed lookup
     shows "unknown" and is never guessed. **300 mi/day is a ceiling, never a
     target** (Dan): the scenic planner (#90–#92) must never score longer days higher.
+41. **2026-11-25 — Claude advises, Python decides** (Dan's interview, #89). bigair calls
+    Claude (`claude-opus-5-5`, effort medium, server-side refusal fallback) through
+    a hand-written tool loop on the Pi, so its spend cap can stop the loop between
+    calls. The tools are local and read-only, apart from `propose_route`, which only
+    records a suggestion; Dan accepts or dismisses it on the page. Claude never
+    changes a plan or estimates fuel. It may see POI notes, plans, the GPS position,
+    the forecast and (C3) telemetry, but never Dan's personal planning notes; the
+    travel rules come from bigair's settings. Offline, it shows "offline" and the
+    planner works without it. The spend cap is $25/month (`CLAUDE_MONTHLY_CAP_USD`,
+    kept durably in `data/bigair/claude-spend.json`), backed by the Console spend
+    limit. Showing spend in HA/Grafana is deferred until a bigair service owns it
+    (single Influx writer); the planner page shows it for now.
