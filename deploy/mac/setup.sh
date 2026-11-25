@@ -116,7 +116,7 @@ plist com.bigair.planner "$envxml" "$uv" run --project "$repo" bigair planner \
   --host "$MAC_TS_IP" --port 8092 --cache "$data/trip-plan.json" --mqtt-host "$PI_TS_IP"
 relay() {  # relay LABEL PORT
   plist "$1" "" "$uv" run --project "$repo" python "$repo/deploy/mac/relay.py" \
-    "$MAC_TS_IP" "$2" "$PI_TS_IP"
+    "$MAC_TS_IP,127.0.0.1" "$2" "$PI_TS_IP"
 }
 relay com.bigair.relay-ha 8123
 relay com.bigair.relay-grafana 3000

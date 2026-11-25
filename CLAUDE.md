@@ -551,3 +551,12 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     sends no briefing, and keeps its own plan and Claude spend counters (cap $5). The
     relays are stdlib Python, not socat, because the macOS firewall already allows
     uv's Python (`docs/hardware/mac-copy.md`). Like Decision #30, nothing depends on it.
+43. **2026-11-25 — Home Assistant is public through the Mac's Funnel; nothing else
+    is** (Dan's request, #105). Someone off the tailnet reaches HA at the Mac's
+    `ts.net` URL, with HA's login (per-person non-admin users, 2FA) as the gate and a
+    5-attempt IP ban. The planner and Grafana have no login, so they stay
+    tailnet-only. HA 2026.11 keeps `http:` settings (trusted proxy, ban) in
+    `.storage/http`, which git doesn't hold, so the steps live in
+    `docs/hardware/mac-copy.md`. If the Pi exposes HA itself later, HelmLog's
+    pattern applies (`docs/https-deployment.md` there): Cloudflare Tunnel with Access
+    for anything that has no login.

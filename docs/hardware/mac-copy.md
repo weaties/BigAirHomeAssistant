@@ -26,6 +26,38 @@ The script installs three launchd agents (`com.bigair.planner`, `com.bigair.rela
 `~/Library/Logs/bigair/`. Run it from the checkout you want the planner to use.
 Re-running it after a `git pull` picks up new code.
 
+## Access without Tailscale (Funnel)
+
+For someone who isn't on the tailnet, the Mac publishes **only Home Assistant** with
+Tailscale Funnel, at `https://<mac>.<tailnet>.ts.net/`. HA's own login is the gate. The
+planner and Grafana have no login, so they stay tailnet-only: a public planner would
+let anyone spend the Google and Claude budgets, and Grafana shows the GPS track.
+
+```bash
+/Applications/Tailscale.app/Contents/MacOS/Tailscale funnel --bg --yes http://127.0.0.1:8123
+/Applications/Tailscale.app/Contents/MacOS/Tailscale funnel --https=443 off   # stop
+```
+
+Funnel targets `127.0.0.1`, because the macOS Tailscale extension can't proxy to the
+Mac's own tailnet address. The relay listens on both. The Funnel setting survives
+restarts, but the URL only answers while the Mac is awake and online.
+
+HA must trust the Mac as a proxy, or it rejects Funnel's `X-Forwarded-For` with a 400.
+**Since HA 2026.11 the `http:` settings live in `.storage/http`, not
+`configuration.yaml`** (`yaml_migration_done`), so an `http:` block in YAML is
+ignored. With HA stopped, set these in `data.stable`:
+
+```json
+"use_x_forwarded_for": true,
+"trusted_proxies": ["<the Mac's tailnet address>"],
+"ip_ban_enabled": true,
+"login_attempts_threshold": 5
+```
+
+Five failed logins from one address ban it, and bans land in `ip_bans.yaml` in HA's
+config folder. Each person gets their own non-admin HA user with two-factor login
+turned on, created in HA by the owner.
+
 ## Differences from the Pi's planner
 
 - **No "current location".** gpsd listens only on the Pi's localhost

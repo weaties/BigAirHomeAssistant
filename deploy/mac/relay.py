@@ -1,6 +1,9 @@
 """Plain TCP relay for the Mac copy (#105): BIND:PORT -> TARGET:PORT, forever.
 
-    python deploy/mac/relay.py 100.a.b.c 8123 100.x.y.z
+    python deploy/mac/relay.py 100.a.b.c,127.0.0.1 8123 100.x.y.z
+
+BIND may list several addresses, comma-separated. Funnel needs 127.0.0.1: the
+macOS Tailscale extension can't proxy to the Mac's own tailnet address.
 
 Bytes only, so HA's websocket and login work unchanged, and HA sees the Mac's
 tailnet address as the client. Stdlib asyncio rather than socat, so it runs under
@@ -36,7 +39,7 @@ async def main(bind: str, port: int, target: str) -> None:
             return
         await asyncio.gather(_pipe(cr, tw), _pipe(tr, cw))
 
-    server = await asyncio.start_server(handle, bind, port, reuse_address=True)
+    server = await asyncio.start_server(handle, bind.split(","), port, reuse_address=True)
     print(f"relay {bind}:{port} -> {target}:{port}", file=sys.stderr, flush=True)
     async with server:
         await server.serve_forever()
