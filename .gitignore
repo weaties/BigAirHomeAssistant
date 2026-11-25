@@ -15,6 +15,7 @@ build/
 homeassistant/secrets.yaml
 esphome/secrets.yaml
 deploy/.env
+deploy/.env.mac
 
 # Personal data — this repo is PUBLIC. Real drives, fills, photos and
 # GPS tracks live on the Pi or in data/, never in git.
