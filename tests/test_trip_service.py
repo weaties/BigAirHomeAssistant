@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from bigair.fuel_sources import LiveFuel, encode_polyline
 from bigair.poi import Poi
 from bigair.poi_near import Reach
+from bigair.travel_rules import TravelRules
 from bigair.trip_service import (
     TripEdges,
     TripError,
@@ -21,6 +22,9 @@ from bigair.trip_service import (
     result_to_json,
     weather_summary,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 NOW = datetime(2026, 11, 24, 16, 0, tzinfo=UTC)
 FRESH = "2026-11-24T12:00:00Z"
@@ -155,7 +159,7 @@ def test_json_is_serialisable_and_has_map_data() -> None:
 def test_current_location_uses_gps() -> None:
     seen: list[str] = []
 
-    def route(o: str, d: str, via: list[str]) -> dict[str, Any]:
+    def route(o: str, d: str, via: list[str], avoid: bool) -> dict[str, Any]:
         seen.append(o)
         return _route()
 
@@ -228,8 +232,8 @@ NEAR = Poi("Near Springs", 41.0, -120.2, ("hot-springs",), "Warm.", 120, "Soak",
 FAR = Poi("Far Peak", 41.0, -124.0, ("geology",), None)
 
 
-def _drive(origin: tuple[float, float], dest: tuple[float, float]) -> float:
-    return 20 * 60.0
+def _drive(origin: tuple[float, float], dest: tuple[float, float]) -> tuple[float, float]:
+    return 20 * 60.0, 15.0
 
 
 def _poi_edges(**over: object) -> TripEdges:
@@ -250,6 +254,7 @@ def test_plan_lists_pois_in_reach_with_detour_and_visit() -> None:
     hit = block["hits"][0]
     assert hit["name"] == "Near Springs"
     assert hit["detour_min"] == 40
+    assert hit["detour_mi"] == 30
     assert hit["visit_min"] == 120
     assert hit["visit_what"] == "Soak"
     assert hit["status"] == "ok"
@@ -294,3 +299,99 @@ def test_changing_the_reach_reuses_the_cached_route_without_replanning() -> None
     block = pois_for_cached(last, Reach("detour", 1.0), _poi_edges(route=no_route))
     assert [h["name"] for h in block["hits"]] == ["Near Springs"]
     assert block["reach"] == {"mode": "detour", "hours": 1.0}
+
+
+# --- slow mode (#90) -------------------------------------------------------------
+
+PST = "-08:00"
+
+
+def _recording_route(seen: list[bool]) -> Callable[[str, str, list[str], bool], dict[str, Any]]:
+    def route(o: str, d: str, via: list[str], avoid: bool) -> dict[str, Any]:
+        seen.append(avoid)
+        return _route()
+
+    return route
+
+
+def test_quick_mode_takes_the_normal_route_slow_mode_avoids_highways() -> None:
+    seen: list[bool] = []
+    plan_trip(TripRequest("A", "B"), _poi_edges(route=_recording_route(seen)))
+    plan_trip(TripRequest("A", "B", mode="slow"), _poi_edges(route=_recording_route(seen)))
+    assert seen == [False, True]
+
+
+def test_slow_mode_budgets_the_day_and_proposes_stops() -> None:
+    depart = datetime.fromisoformat("2026-11-25T08:00:00" + PST)
+    r = plan_trip(TripRequest("A", "B", mode="slow", depart=depart), _poi_edges())
+    assert r.day is not None
+    assert r.day.budget.window_min == pytest.approx(420)  # 08:00 → 15:00
+    assert r.day.budget.end_reason == "arrive_by"
+    # 240 min of driving leaves 180; Near Springs is 40 detour + 120 visit = 160.
+    assert r.day.proposal.fits
+    assert r.day.proposal.chosen == ("Near Springs",)
+    j = result_to_json(r)
+    json.dumps(j)
+    day = j["day"]
+    assert day["mode"] == "slow"
+    assert day["window_min"] == 420
+    assert day["drive_min"] == 240
+    assert day["route_mi"] == 200
+    assert day["max_day_mi"] == 300
+    assert day["proposal"]["chosen"] == ["Near Springs"]
+    assert day["proposal"]["added_min"] == 160
+    hit = j["pois"]["hits"][0]
+    # 1 + 1.0 (★5) + 0.5 (November) - 0.25 (46°F at the ETA) = 2.25
+    assert hit["score"] == 2.25
+    assert "★5 (+1.0)" in hit["reasons"]
+
+
+def test_slow_mode_without_a_departure_leaves_at_ten_local() -> None:
+    r = plan_trip(TripRequest("A", "B", mode="slow", utc_offset_min=-480), _poi_edges())
+    # NOW is 08:00 PST, so today at 10:00 PST.
+    assert r.depart == datetime(2026, 11, 24, 18, 0, tzinfo=UTC)
+
+
+def test_slow_mode_after_ten_leaves_tomorrow_at_ten() -> None:
+    late = datetime(2026, 11, 25, 3, 0, tzinfo=UTC)  # 19:00 PST on the 24th
+    r = plan_trip(
+        TripRequest("A", "B", mode="slow", utc_offset_min=-480), _poi_edges(now=lambda: late)
+    )
+    assert r.depart == datetime(2026, 11, 25, 18, 0, tzinfo=UTC)
+
+
+def test_slow_leg_over_the_ceiling_says_so_and_proposes_nothing() -> None:
+    depart = datetime.fromisoformat("2026-11-25T08:00:00" + PST)
+    rules = TravelRules(max_day_mi=150.0)
+    r = plan_trip(TripRequest("A", "B", mode="slow", depart=depart), _poi_edges(), rules)
+    assert r.day is not None
+    assert not r.day.proposal.fits
+    assert r.day.proposal.problems == ("200 mi is over the 150 mi daily ceiling",)
+    assert r.options[0].feasible  # the fuel plan still stands
+
+
+def test_quick_mode_has_no_day_budget() -> None:
+    r = plan_trip(TripRequest("A", "B"), _poi_edges())
+    assert r.day is None
+    assert result_to_json(r)["day"] == {"mode": "quick"}
+
+
+def test_reach_change_recomputes_the_slow_proposal_from_the_cache() -> None:
+    depart = datetime.fromisoformat("2026-11-25T08:00:00" + PST)
+    edges = _poi_edges()
+    req = TripRequest("A", "B", mode="slow", depart=depart, reach=Reach("detour", 0.5))
+    last = result_to_json(plan_trip(req, edges))
+    assert last["day"]["proposal"]["chosen"] == []
+    block = pois_for_cached(last, Reach("detour", 1.0), edges)
+    assert block["proposal"]["chosen"] == ["Near Springs"]
+    assert block["hits"][0]["score"] == 2.25  # weather re-read from the cached plan
+
+
+def test_request_from_json_reads_mode_and_offset() -> None:
+    req = request_from_json(
+        {"origin": "A", "destination": "B", "mode": "slow", "utc_offset_min": -420}
+    )
+    assert (req.mode, req.utc_offset_min) == ("slow", -420)
+    assert request_from_json({"origin": "A", "destination": "B"}).mode == "quick"
+    with pytest.raises(TripError, match="mode"):
+        request_from_json({"origin": "A", "destination": "B", "mode": "warp"})

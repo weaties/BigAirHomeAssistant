@@ -108,6 +108,10 @@
       </div>
     </div>
     <div class="row" style="margin-top:10px">
+      <div class="chips" id="modechips" style="margin:0">
+        <span class="chip on" data-mode="quick" title="Google's normal route">Get there quick</span>
+        <span class="chip" data-mode="slow" title="No interstates, ≤300 mi, in by 3pm before dark, best POIs proposed">Get there slow</span>
+      </div>
       <label class="row" style="margin:0;color:var(--ink);font-size:15px">
         <input type="checkbox" id="round_trip"> Round trip (same road home)
       </label>
@@ -145,6 +149,11 @@
         <input type="range" id="shift" min="-12" max="72" step="1" value="0">
         <div class="note">Slide to see the weather for another departure time. Fuel prices aren't re-planned.</div>
       </div>
+    </div>
+
+    <div class="card hidden" id="daycard">
+      <h2>Today's drive (slow mode)</h2>
+      <div id="day"></div>
     </div>
 
     <div class="card hidden" id="poicard">
@@ -204,20 +213,31 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch { return 
 
 let plan = null, optIdx = 0, leg = "out", map = null, layer = null, routeGeo = null;
 const picked = new Set();  // POI names ticked in the list
+let mode = "quick", departAuto = true;
 
 // ---------- form ----------
 const FIELDS = ["origin", "destination", "via", "reserves", "reach_mode", "reach_hours"];
+function nextHour() { const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); return d; }
+function setMode(m) {
+  mode = m === "slow" ? "slow" : "quick";
+  document.querySelectorAll("#modechips .chip").forEach((c) => c.classList.toggle("on", c.dataset.mode === mode));
+  // Slow mode leaves at the rules' time (10:00) unless you set one.
+  if (departAuto) $("depart").value = mode === "slow" ? "" : toLocalInput(nextHour());
+  $("depart").placeholder = mode === "slow" ? "next 10:00" : "";
+}
 function loadForm() {
   try {
     const f = JSON.parse(store.get("planner.form") || "{}");
     FIELDS.forEach((k) => { if (f[k] != null) $(k).value = f[k]; });
     $("round_trip").checked = !!f.round_trip;
+    if (f.mode) setMode(f.mode);
   } catch { /* ignore */ }
   toggleReturn();
 }
 function saveForm() {
   const f = Object.fromEntries(FIELDS.map((k) => [k, $(k).value]));
   f.round_trip = $("round_trip").checked;
+  f.mode = mode;
   store.set("planner.form", JSON.stringify(f));
 }
 function toggleReturn() { $("returnbox").classList.toggle("hidden", !$("round_trip").checked); }
@@ -228,6 +248,8 @@ function toLocalInput(d) {
 }
 
 $("round_trip").addEventListener("change", toggleReturn);
+document.querySelectorAll("#modechips .chip").forEach((c) => c.addEventListener("click", () => setMode(c.dataset.mode)));
+$("depart").addEventListener("input", () => { departAuto = false; });
 $("here").addEventListener("click", () => { $("origin").value = "here"; });
 $("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -239,6 +261,7 @@ $("form").addEventListener("submit", async (ev) => {
     depart: localIso($("depart").value), return_depart: $("round_trip").checked ? localIso($("return_depart").value) : null,
     reserves: $("reserves").value.split(",").map((s) => s.trim()).filter(Boolean),
     reach: reach(),
+    mode, utc_offset_min: -new Date().getTimezoneOffset(),
   };
   $("go").disabled = true;
   $("status").textContent = "Planning… this takes about 15 seconds.";
@@ -352,6 +375,8 @@ function render(p) {
   $("legs").querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => { leg = c.dataset.leg; render(plan); }));
 
   renderOptions();
+  if (p.day && p.day.proposal) adoptProposal(p.day.proposal);
+  renderDay();
   renderPois();
   renderAlerts();
   $("unpricedcard").classList.toggle("hidden", !p.unpriced.length);
@@ -383,6 +408,31 @@ function renderOptions() {
   const naive = p.naive.feasible ? ` Filling at ¼ tank would cost ${money(p.naive.net_cost_usd)}.` : "";
   $("optnote").textContent = `Lowest point ${o.min_gal.toFixed(1)} gal (~${Math.round(o.min_gal * p.tank.planning_mpg)} mi). ` +
     `Arrive with ${o.end_gal.toFixed(1)} gal. Net ${money(o.net_cost_usd)} (fuel ${money(o.fuel_cost_usd)}, less fuel left over).${saves}${naive}`;
+}
+
+// ---------- slow mode's day (#90) ----------
+function adoptProposal(pr) {
+  picked.clear();
+  (pr.chosen || []).forEach((n) => picked.add(n));
+}
+function renderDay() {
+  const d = plan.day;
+  $("daycard").classList.toggle("hidden", !d || d.mode !== "slow");
+  if (!d || d.mode !== "slow") return;
+  const end = { arrive_by: "in by", sunset: "before sunset at", polar_night: "no daylight" }[d.end_reason];
+  const sun = d.sunset ? ` · sunset ${fmtTime(new Date(d.sunset))}` : "";
+  const pr = (plan.pois && plan.pois.proposal) || d.proposal;
+  const lines = [`Leave <b>${fmtTime(new Date(d.depart))}</b>, ${end} <b>${fmtTime(new Date(d.end))}</b>${sun}: a <b>${hm(d.window_min)}</b> window.`,
+    `Driving straight through: ${hm(d.drive_min)}, ${d.route_mi} of ${d.max_day_mi} mi max (no interstates).`];
+  if (!pr.fits) {
+    lines.push(`<div class="banner err">This leg doesn't fit: ${pr.problems.map(esc).join("; ")}. Pick a closer destination, or leave earlier.</div>`);
+  } else if (pr.chosen.length) {
+    lines.push(`Proposed stops (ticked below): <b>${pr.chosen.map(esc).join(", ")}</b>, +${hm(pr.added_min)} and +${pr.added_mi} mi. Untick or add your own; the totals below re-check the day.`);
+  } else {
+    lines.push("No POI stops fit today's window. A shorter leg leaves room for detours.");
+  }
+  lines.push(`<span class="note">Then stay ${d.stay_nights} nights. Short days are fine; ${d.max_day_mi} mi is a ceiling, not a target.</span>`);
+  $("day").innerHTML = lines.map((l) => `<div style="margin-bottom:4px">${l}</div>`).join("");
 }
 
 // ---------- points of interest (#88) ----------
@@ -419,10 +469,11 @@ function renderPois() {
     const season = h.in_season === true ? '<span class="tag">in season</span>'
       : h.in_season === false ? `<span class="tag" title="Best: ${(h.best_months || []).map((m) => MONTHS[m - 1]).join(", ")}">off season</span>` : "";
     const stars = h.rating ? `<span class="tag">${"★".repeat(h.rating)}</span>` : "";
+    const sc = h.score != null ? `<span class="tag" title="${esc((h.reasons || []).join(" · ") || "base score")}">score ${h.score}</span>` : "";
     const camp = h.destination ? '<span class="tag">3-night stay</span>' : "";
     const onRoute = (plan.request.via || []).includes(`${h.lat},${h.lon}`) ? '<span class="tag">on the route</span>' : "";
     return `<tr><td><input type="checkbox" data-i="${i}" ${picked.has(h.name) ? "checked" : ""}></td>
-      <td><b>${esc(h.name)}</b> ${onRoute}${stars}${season}${camp}
+      <td><b>${esc(h.name)}</b> ${onRoute}${sc}${stars}${season}${camp}
         ${h.summary ? `<div class="note">${esc(h.summary)}</div>` : ""}
         ${h.visit_what ? `<div class="note">Visit: ${esc(h.visit_what)}</div>` : ""}</td>
       <td class="num">mi ${h.mile.toFixed(0)}<div class="note">${fmtTime(new Date(h.eta))}</div></td>
@@ -454,8 +505,16 @@ function updatePoiSum() {
     const v = visitMin(h);
     if (v == null) unknown.push("visit for " + h.name); else visit += v;
   });
-  $("poisum").textContent = `${sel.length} picked · detours ${hm(drive)} + visits ${hm(visit)} = ${hm(drive + visit)} added` +
-    (unknown.length ? ` (not counted: ${unknown.join(", ")})` : "");
+  let miles = 0;
+  sel.forEach((h) => { if (h.detour_mi != null) miles += h.detour_mi; });
+  let text = `${sel.length} picked · detours ${hm(drive)} + visits ${hm(visit)} = ${hm(drive + visit)} added`;
+  const d = plan.day;
+  if (d && d.mode === "slow") {
+    const total = d.drive_min + drive + visit, mi = d.route_mi + miles;
+    const ok = total <= d.window_min && mi <= d.max_day_mi;
+    text += ` · day: ${hm(total)} of ${hm(d.window_min)}, ${Math.round(mi)} of ${d.max_day_mi} mi ${ok ? "✓ fits" : "✗ doesn't fit"}`;
+  }
+  $("poisum").textContent = text + (unknown.length ? ` (not counted: ${unknown.join(", ")})` : "");
 }
 
 async function updatePois() {
@@ -467,7 +526,8 @@ async function updatePois() {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
     plan.pois = j;
-    renderPois(); drawMap();
+    if (j.proposal) adoptProposal(j.proposal);
+    renderDay(); renderPois(); drawMap();
   } catch (e) {
     $("reachnote").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
   } finally {
@@ -580,9 +640,8 @@ function drawMap() {
 $("shift").addEventListener("input", () => { if (plan) drawMap(); });
 
 // ---------- start ----------
+$("depart").value = toLocalInput(nextHour());
 loadForm();
-const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
-$("depart").value = toLocalInput(d);
 fetch("api/plan/last").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) render(j); }).catch(() => {});
 </script>
 </body>

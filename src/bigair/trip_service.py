@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from bigair.day_plan import Candidate, DayBudget, Proposal, day_budget, propose, score_poi
 from bigair.fuel_plan import (
     Plan,
     PlanInput,
@@ -52,6 +53,7 @@ from bigair.route_weather import (
     sample_points,
     wmo_label,
 )
+from bigair.travel_rules import TravelRules
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -64,6 +66,7 @@ if TYPE_CHECKING:
 HERE = ("here", "current location", "current")
 DEFAULT_RESERVES = (150.0, 100.0, 75.0, 50.0)
 ALERT_EVERY = 2
+MODES = ("quick", "slow")
 """Ask NWS about every other weather point (about every 50 mi)."""
 
 
@@ -91,11 +94,16 @@ class TripRequest:
     max_age_h: float = 72.0
     weather_every_mi: float = 25.0
     reach: Reach = Reach("detour", 3.0)
+    mode: str = "quick"
+    """``quick`` (Google's route) or ``slow`` (travel rules, scenic proposal, #90)."""
+    utc_offset_min: int | None = None
+    """The phone's UTC offset, for slow mode's local times. None: the Pi's."""
 
 
 @dataclass(frozen=True)
 class TripEdges:
-    route: Callable[[str, str, list[str]], dict[str, Any]]
+    route: Callable[[str, str, list[str], bool], dict[str, Any]]
+    """(origin, destination, via, avoid_highways) → Google route body."""
     search: Callable[[Segment, str | None, str, str | None], dict[str, Any]]
     now: Callable[[], datetime]
     eia: Callable[[], dict[str, Any]] | None = None
@@ -130,9 +138,32 @@ class TripResult:
     warnings: tuple[str, ...]
     pois: list[PoiHit] = field(default_factory=list)
     pois_enabled: bool = False
+    scores: dict[str, tuple[float, list[str]]] = field(default_factory=dict)
+    day: DayPlan | None = None
 
 
-def plan_trip(req: TripRequest, edges: TripEdges) -> TripResult:
+@dataclass(frozen=True)
+class DayPlan:
+    """Slow mode's day: the time budget and the proposed stops (#90)."""
+
+    budget: DayBudget
+    drive_min: float
+    route_mi: float
+    rules: TravelRules
+    proposal: Proposal
+
+
+def _slow_depart(now: datetime, rules: TravelRules, offset_min: int | None) -> datetime:
+    """The next departure at the rules' time (10:00), local to the phone (or the Pi)."""
+    tz = timezone(timedelta(minutes=offset_min)) if offset_min is not None else None
+    local = now.astimezone(tz)
+    d = local.replace(hour=rules.depart_h, minute=rules.depart_m, second=0, microsecond=0)
+    return d if d >= local else d + timedelta(days=1)
+
+
+def plan_trip(req: TripRequest, edges: TripEdges, rules: TravelRules | None = None) -> TripResult:
+    rules = rules or TravelRules()
+    slow = req.mode == "slow"
     now = edges.now()
     warnings: list[str] = []
 
@@ -144,7 +175,8 @@ def plan_trip(req: TripRequest, edges: TripEdges) -> TripResult:
         origin = f"{pos[0]:.5f},{pos[1]:.5f}"
 
     try:
-        route = decode_route(edges.route(origin, req.destination, list(req.via)))
+        avoid = slow and rules.avoid_interstates
+        route = decode_route(edges.route(origin, req.destination, list(req.via), avoid))
     except ValueError as e:
         raise TripError(f"no route from {req.origin} to {req.destination}") from e
 
@@ -171,7 +203,12 @@ def plan_trip(req: TripRequest, edges: TripEdges) -> TripResult:
         except (OSError, ValueError, KeyError) as e:
             warnings.append(f"Price trend unavailable ({e}); planned without it.")
 
-    depart = req.depart or now
+    if req.depart is not None:
+        depart = req.depart
+    elif slow:
+        depart = _slow_depart(now, rules, req.utc_offset_min)
+    else:
+        depart = now
     found = collect_candidates(route, edges.search)
     stations = build_stations(
         found.candidates, route, now, depart, drifts, req.discounts, req.max_age_h
@@ -223,6 +260,20 @@ def plan_trip(req: TripRequest, edges: TripEdges) -> TripResult:
                 warnings.append(f"Weather alerts unavailable ({e}).")
 
     hits, pois_enabled = _pois(route, depart, req.reach, edges, warnings)
+    temp = _temp_from_forecasts(points, hourly)
+    scores = {h.poi.name: score_poi(h.poi, h.in_season, temp(h.mile, h.eta), rules) for h in hits}
+    hits = _by_score(hits, scores)
+    day = None
+    if slow:
+        budget = day_budget(depart, rules, route.points[-1])
+        drive_min = route.duration_s / 60
+        day = DayPlan(
+            budget,
+            drive_min,
+            route.total_mi,
+            rules,
+            propose(_candidates(hits, scores), drive_min, route.total_mi, budget.window_min, rules),
+        )
 
     return TripResult(
         request=req,
@@ -242,7 +293,73 @@ def plan_trip(req: TripRequest, edges: TripEdges) -> TripResult:
         warnings=tuple(warnings),
         pois=hits,
         pois_enabled=pois_enabled,
+        scores=scores,
+        day=day,
     )
+
+
+def _f(temp_c: float) -> float:
+    return temp_c * 9 / 5 + 32
+
+
+def _temp_from_forecasts(
+    points: list[RoutePoint], hourly: list[Hourly]
+) -> Callable[[float, datetime], float | None]:
+    """°F at the outbound weather point nearest a road mile, at a time; None if unknown."""
+    out = [p for p in points if p.leg == "out"]
+
+    def at(mile: float, when: datetime) -> float | None:
+        if not out:
+            return None
+        p = min(out, key=lambda q: abs(q.mile - mile))
+        if p.series >= len(hourly):
+            return None
+        c = conditions_at(hourly[p.series], when)
+        return None if c is None else _f(c.temp_c)
+
+    return at
+
+
+def _temp_from_json(last: dict[str, Any]) -> Callable[[float, datetime], float | None]:
+    """The same lookup, from a cached plan's weather JSON."""
+    w = last.get("weather") or {}
+    out = [p for p in (w.get("points") or []) if p.get("leg") == "out"]
+    series = w.get("series") or []
+
+    def at(mile: float, when: datetime) -> float | None:
+        if not out:
+            return None
+        p = min(out, key=lambda q: abs(float(q["mile"]) - mile))
+        i = int(p["series"])
+        if i >= len(series) or not series[i].get("start"):
+            return None
+        s = series[i]
+        k = round((when - datetime.fromisoformat(s["start"])).total_seconds() / 3600)
+        temps = s.get("temp_c") or []
+        return _f(float(temps[k])) if 0 <= k < len(temps) else None
+
+    return at
+
+
+def _by_score(hits: list[PoiHit], scores: dict[str, tuple[float, list[str]]]) -> list[PoiHit]:
+    """Best score first; then known detours, shortest first (#90)."""
+
+    def key(h: PoiHit) -> tuple[float, int, float]:
+        d = h.detour_min
+        return (-scores[h.poi.name][0], 0 if d is not None else 1, d if d is not None else 0.0)
+
+    return sorted(hits, key=key)
+
+
+def _candidates(hits: list[PoiHit], scores: dict[str, tuple[float, list[str]]]) -> list[Candidate]:
+    """Only POIs whose detour time, detour miles and visit time are all known."""
+    return [
+        Candidate(
+            h.poi.name, scores[h.poi.name][0], h.detour_min, float(h.poi.visit_min), h.detour_mi
+        )
+        for h in hits
+        if h.detour_min is not None and h.detour_mi is not None and h.poi.visit_min is not None
+    ]
 
 
 def _pois(
@@ -256,8 +373,14 @@ def _pois(
     return near_route(route, depart, pois, reach, edges.drive_s, edges.poi_cache), True
 
 
-def pois_for_cached(last: dict[str, Any], reach: Reach, edges: TripEdges) -> dict[str, Any]:
-    """Re-run the POI search on the cached plan's route with a new reach (no re-plan)."""
+def pois_for_cached(
+    last: dict[str, Any], reach: Reach, edges: TripEdges, rules: TravelRules | None = None
+) -> dict[str, Any]:
+    """Re-run the POI search on the cached plan's route with a new reach (no re-plan).
+
+    In slow mode the proposal is recomputed too, against the cached day budget.
+    """
+    rules = rules or TravelRules()
     try:
         route = RouteInfo.from_points(
             decode_polyline(last["route"]["polyline"]),
@@ -269,12 +392,62 @@ def pois_for_cached(last: dict[str, Any], reach: Reach, edges: TripEdges) -> dic
         raise TripError("the cached plan has no usable route; plan again") from e
     warnings: list[str] = []
     hits, enabled = _pois(route, depart, reach, edges, warnings)
-    return _pois_json(hits, enabled, reach, warnings)
+    temp = _temp_from_json(last)
+    scores = {h.poi.name: score_poi(h.poi, h.in_season, temp(h.mile, h.eta), rules) for h in hits}
+    hits = _by_score(hits, scores)
+    block = _pois_json(hits, enabled, reach, scores, warnings)
+    day = last.get("day") or {}
+    if day.get("mode") == "slow":
+        p = propose(
+            _candidates(hits, scores),
+            float(day["drive_min"]),
+            float(day["route_mi"]),
+            float(day["window_min"]),
+            rules,
+        )
+        block["proposal"] = _proposal_json(p)
+    return block
+
+
+def _proposal_json(p: Proposal) -> dict[str, Any]:
+    return {
+        "fits": p.fits,
+        "chosen": list(p.chosen),
+        "added_min": round(p.added_min),
+        "added_mi": round(p.added_mi),
+        "score": round(p.score, 2),
+        "problems": list(p.problems),
+    }
+
+
+def _day_json(day: DayPlan | None) -> dict[str, Any]:
+    if day is None:
+        return {"mode": "quick"}
+    b, r = day.budget, day.rules
+    return {
+        "mode": "slow",
+        "depart": _iso(b.depart),
+        "arrive_by": _iso(b.arrive_by),
+        "sunset": _iso(b.sunset),
+        "end": _iso(b.end),
+        "end_reason": b.end_reason,
+        "window_min": round(b.window_min),
+        "drive_min": round(day.drive_min),
+        "route_mi": round(day.route_mi),
+        "max_day_mi": r.max_day_mi,
+        "stay_nights": r.stay_nights,
+        "proposal": _proposal_json(day.proposal),
+    }
 
 
 def _pois_json(
-    hits: list[PoiHit], enabled: bool, reach: Reach, warnings: list[str] | None = None
+    hits: list[PoiHit],
+    enabled: bool,
+    reach: Reach,
+    scores: dict[str, tuple[float, list[str]]] | None = None,
+    warnings: list[str] | None = None,
 ) -> dict[str, Any]:
+    scores = scores or {}
     return {
         "enabled": enabled,
         "reach": {"mode": reach.mode, "hours": reach.hours},
@@ -292,12 +465,15 @@ def _pois_json(
                 "status": h.status,
                 "one_way_min": None if h.one_way_min is None else round(h.one_way_min),
                 "detour_min": None if h.detour_min is None else round(h.detour_min),
+                "detour_mi": None if h.detour_mi is None else round(h.detour_mi),
                 "visit_min": h.poi.visit_min,
                 "visit_what": h.poi.visit_what,
                 "best_months": None if h.poi.best_months is None else list(h.poi.best_months),
                 "in_season": h.in_season,
                 "rating": h.poi.rating,
                 "destination": h.poi.destination,
+                "score": round(scores[h.poi.name][0], 2) if h.poi.name in scores else None,
+                "reasons": scores[h.poi.name][1] if h.poi.name in scores else [],
             }
             for h in hits
         ],
@@ -452,7 +628,8 @@ def result_to_json(r: TripResult) -> dict[str, Any]:
             for a in r.alerts
         ],
         "warnings": list(r.warnings),
-        "pois": _pois_json(r.pois, r.pois_enabled, r.request.reach),
+        "pois": _pois_json(r.pois, r.pois_enabled, r.request.reach, r.scores),
+        "day": _day_json(r.day),
     }
 
 
@@ -486,6 +663,10 @@ def request_from_json(d: dict[str, Any]) -> TripRequest:
     if not reserves or any(r < 0 for r in reserves):
         raise TripError("reserves must be zero or more miles")
     discounts = d.get("discounts")
+    mode = str(d.get("mode") or "quick")
+    if mode not in MODES:
+        raise TripError("mode must be quick or slow")
+    offset = d.get("utc_offset_min")
     reach_in = d.get("reach")
     try:
         reach = reach_from_json(reach_in if isinstance(reach_in, dict) else None)
@@ -508,4 +689,6 @@ def request_from_json(d: dict[str, Any]) -> TripRequest:
         tank_gal=_num(d["tank_gal"], "tank_gal") if d.get("tank_gal") not in (None, "") else None,
         mpg=_num(d["mpg"], "mpg") if d.get("mpg") not in (None, "") else None,
         reach=reach,
+        mode=mode,
+        utc_offset_min=None if offset in (None, "") else round(_num(offset, "utc_offset_min")),
     )

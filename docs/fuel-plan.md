@@ -140,8 +140,61 @@ arrival). The planner never fills in a number it doesn't know:
 - a missing visit time shows **?**.
 
 None of these are counted in the totals. POIs are only matched to the outbound
-route. The list is ordered by detour, then rating, then season. Proper scenic
-scoring comes in #90.
+route.
+
+### Get there slow (#90)
+
+The **Get there quick / Get there slow** switch sits under the form. Quick is
+Google's normal route. Slow follows Dan's travel rules:
+
+- no interstates (Google's `avoidHighways`);
+- at most 300 mi a day, detours included (**a ceiling, never a target**: short
+  days are good);
+- leave at 10:00 unless you set a time;
+- in by 15:00 and before sunset at the destination;
+- then stay 3 nights.
+
+A **Today's drive** card shows the window (leave → in by 15:00 or sunset,
+whichever comes first), the drive time and the miles. If the drive alone
+doesn't fit, it says so plainly ("6h40 of driving vs a 5h00 window", "340 mi is
+over the 300 mi daily ceiling") and proposes nothing.
+
+Each POI gets a **score**. Hover over it to see the terms:
+
+| Term | Value |
+|---|---|
+| Base (any POI) | 1 |
+| Dan's rating | 0.5 × (rating − 3), so ★5 = +1 and ★1 = −1 |
+| In / out of `best_months` at the ETA | ±0.5 |
+| Tag weights from the rules file | as set |
+| Forecast at the ETA inside / outside the 70–80°F band | ±0.25 |
+
+Distance isn't in the score, so a longer day never scores higher.
+
+Slow mode **proposes** the set of POIs with the highest total score whose
+detours and visits fit in the time left after the drive, and whose detour miles
+keep the day under 300. Ties go to the set that adds less time. Only POIs with
+a known detour and visit time can be proposed. The proposed POIs arrive ticked.
+Untick or tick others, and the totals line re-checks the day ("6h40 of 7h00,
+226 of 300 mi ✓ fits"). **Add selected as via & re-plan** routes through them.
+
+To change the rules or weight tags, put a YAML file at
+`data/bigair/travel-rules.yaml` on the Pi:
+
+```yaml
+max_day_mi: 300        # ceiling
+depart: "10:00"
+arrive_by: "15:00"
+no_driving_after_dark: true
+avoid_interstates: true
+temp_band_f: [70, 80]
+tag_weights: {hot-springs: 0.5, geology: 0.25}
+```
+
+A bad file is logged and the defaults are used.
+
+Not in this phase: scenic byways (needs the FHWA byways dataset on the Pi) and
+Claude's "why this way" explanation (#89).
 
 ## Trip file
 

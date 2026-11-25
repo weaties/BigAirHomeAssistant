@@ -40,8 +40,9 @@ CROW_MPH = 70.0
 AHEAD_MAX_ONE_WAY_MIN = 90.0
 MAX_LOOKUPS = 25
 
-DriveTime = Callable[[tuple[float, float], tuple[float, float]], float]
-LookupCache = dict[tuple[float, float, float, float], float]
+DriveTime = Callable[[tuple[float, float], tuple[float, float]], tuple[float, float]]
+"""(origin, destination) → (seconds, road miles)."""
+LookupCache = dict[tuple[float, float, float, float], tuple[float, float]]
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,8 @@ class PoiHit:
     """``ok``, ``unchecked`` (over the lookup cap) or ``lookup_failed``."""
     one_way_min: float | None
     detour_min: float | None
+    detour_mi: float | None
+    """Road miles out and back, counted against the day's mileage ceiling."""
     in_season: bool | None
     """Is the ETA's month in ``best_months``? None if the note doesn't say."""
 
@@ -136,20 +139,21 @@ def near_route(
         key = (round(join[0], 4), round(join[1], 4), round(p.lat, 4), round(p.lon, 4))
         eta = depart + timedelta(minutes=offset_min)
         season = None if p.best_months is None else eta.month in p.best_months
-        one_way: float | None = None
+        leg: tuple[float, float] | None = None
         if key in cache:
-            one_way = cache[key]
+            leg = cache[key]
             status = "ok"
         elif lookups >= MAX_LOOKUPS:
             status = "unchecked"
         else:
             lookups += 1
             try:
-                one_way = drive_s(join, (p.lat, p.lon)) / 60.0
-                cache[key] = one_way
+                leg = drive_s(join, (p.lat, p.lon))
+                cache[key] = leg
                 status = "ok"
             except (OSError, ValueError, KeyError, RuntimeError):
                 status = "lookup_failed"
+        one_way = None if leg is None else leg[0] / 60.0
         if one_way is not None and not _fits(reach, one_way, offset_min):
             continue
         hits.append(
@@ -161,6 +165,7 @@ def near_route(
                 status=status,
                 one_way_min=one_way,
                 detour_min=None if one_way is None else 2 * one_way,
+                detour_mi=None if leg is None else 2 * leg[1],
                 in_season=season,
             )
         )
