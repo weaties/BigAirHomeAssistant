@@ -8,29 +8,30 @@ vault. It works on the van LAN or over Tailscale, with no internet needed.
 The notes are personal and this repo is public, so the Pi copy lives under
 `data/` (gitignored), and only that POI folder is shared, not the whole vault.
 
-## Pi
+## Setup (done on 2026-11-25)
 
-1. In `deploy/.env`, set `SYNCTHING_ENABLE=true`. Leave `POI_HOST_DIR=../data/poi`,
-   which is `data/poi` in the repo.
-2. Run `./deploy/bootstrap.sh`. It installs Debian's `syncthing`, enables
-   `syncthing@<user>`, and creates the folder.
-3. Open the Syncthing web UI. It listens on the Pi's localhost only:
-   `ssh -L 8384:localhost:8384 bigair-ha` from the Mac, then
-   <http://localhost:8384/>. Set a GUI password when it asks.
+Both ends run Syncthing as a background service: `syncthing@<user>` (systemd) on
+the Pi, and `brew services` (a login agent) on the Mac.
 
-## Mac
+- **Pi:** set `SYNCTHING_ENABLE=true` in `deploy/.env` and run the bootstrap.
+  It installs Debian's `syncthing` with `--no-install-recommends`; without that
+  flag, apt pulls about 400 MB of extras.
+- **Mac:** `brew install syncthing && brew services start syncthing`. On Apple
+  Silicon from a Rosetta shell, use `arch -arm64 brew …`.
+- **Privacy:** global discovery, relays and NAT traversal are **off** on both
+  ends, so nothing goes through syncthing.net. Each device lists the other by
+  Tailscale address plus `dynamic`, so they find each other by local discovery
+  on the same LAN, or over the tailnet.
+- **Folder `rt27-poi`:** on the Mac, the vault's `…/road-trip-2027/map/poi` is
+  **Send Only**, with `.stignore` = `(?d).DS_Store`. On the Pi, the repo's
+  `data/poi` is **Receive Only**.
 
-1. Install Syncthing (`brew install --cask syncthing`) and open it.
-2. **Add Remote Device** with the Pi's device ID (Pi web UI → Actions → Show ID).
-   Accept the Mac on the Pi.
-3. **Add Folder** pointing at the vault's POI folder (`…/road-trip-2027/map/poi`),
-   with folder type **Send Only**, shared with the Pi.
-4. On the Pi, accept the folder, set its path to the repo's `data/poi` and its
-   type to **Receive Only**.
+Both web UIs listen on localhost only (`ssh -L 8384:localhost:8384 bigair-ha`
+for the Pi's). The Pi's Debian Syncthing is 1.x, and its `syncthing cli` crashes
+on list-valued settings, so change those through the web UI or the REST API.
 
-Edits in Obsidian reach the Pi within seconds whenever both are on the same
-network or the tailnet. The planner reads the folder on every plan, so there's
-nothing to restart.
+Edits in Obsidian reach the Pi within about 30 s. The planner reads the folder
+on every plan, so there's nothing to restart.
 
 ## Check
 

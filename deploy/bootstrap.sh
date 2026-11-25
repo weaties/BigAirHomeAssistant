@@ -223,7 +223,9 @@ syncthing_host() {
     return
   fi
   if ! command -v syncthing >/dev/null; then
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq syncthing >/dev/null
+    # Without --no-install-recommends apt pulls ~400 MB of desktop extras (seen on the Pi).
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends syncthing \
+      >/dev/null
   fi
   sudo systemctl enable --now "syncthing@$USER" >/dev/null 2>&1
   echo "Syncthing running as $USER (web UI on this Pi's localhost:8384)."
