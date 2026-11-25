@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from bigair.claude_agent import AgentContext, Tool
-from bigair.destinations import crow_mi
+from bigair.destinations import Destination, crow_mi
 from bigair.route_weather import conditions_at, decode_open_meteo, wmo_label
 
 if TYPE_CHECKING:
@@ -36,6 +36,8 @@ class ToolDeps:
     last_plan: Callable[[], dict[str, Any] | None]
     forecast: Callable[[float, float, str], dict[str, Any] | None]
     """(lat, lon, ISO time) → conditions then, or None beyond the forecast."""
+    places: Callable[[], list[Destination]] | None = None
+    """iOverlander and public-land spots (#91), for find_destinations (#93)."""
 
 
 def _obj(props: dict[str, Any]) -> dict[str, Any]:
@@ -124,6 +126,36 @@ def build_tools(deps: ToolDeps) -> list[Tool]:
         out = deps.forecast(float(a["lat"]), float(a["lon"]), str(a["when"]))
         return out if out is not None else {"error": "beyond the forecast or unavailable"}
 
+    def destinations(ctx: AgentContext, a: dict[str, Any]) -> dict[str, Any]:
+        here = (float(a["lat"]), float(a["lon"]))
+        vault = [
+            Destination(p.name, p.lat, p.lon, "poi", None, p.summary, p)
+            for p in deps.pois()
+            if p.destination
+        ]
+        pool = [*vault, *(deps.places() if deps.places else [])]
+        found = sorted(
+            ((crow_mi(here, (d.lat, d.lon)), d) for d in pool),
+            key=lambda x: x[0],
+        )
+        found = [(dist, d) for dist, d in found if dist <= float(a["radius_mi"])]
+        out = []
+        for dist, d in found[:MAX_POIS]:
+            item: dict[str, Any] = {
+                "name": d.name,
+                "lat": round(d.lat, 4),
+                "lon": round(d.lon, 4),
+                "source": d.source,
+                "kind": d.kind,
+                "note": d.note,
+                "distance_mi": round(dist, 1),
+            }
+            if d.poi is not None:
+                item["rating"] = d.poi.rating
+                item["best_months"] = list(d.poi.best_months) if d.poi.best_months else None
+            out.append(item)
+        return {"destinations": out, "total": len(found)}
+
     def propose(ctx: AgentContext, a: dict[str, Any]) -> dict[str, Any]:
         params = {"destination": a["destination"], "via": list(a["via"]), "mode": a["mode"]}
         pid = ctx.propose("route", str(a["title"]), params, str(a["reason"]))
@@ -153,6 +185,14 @@ def build_tools(deps: ToolDeps) -> list[Tool]:
             "with their scores, and the stops slow mode proposed.",
             _obj({}),
             last_plan,
+        ),
+        Tool(
+            "find_destinations",
+            "Places to spend a few nights within radius_mi (straight line) of a point, nearest "
+            "first: Dan's POIs marked as 3-night spots, his iOverlander campsites, and BLM / "
+            "Forest Service land. Road distance is longer; check weather_at for the forecast.",
+            _obj({"lat": num, "lon": num, "radius_mi": num}),
+            destinations,
         ),
         Tool(
             "weather_at",

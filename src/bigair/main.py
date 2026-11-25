@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from bigair.byways import ByWayIndex
     from bigair.claude_service import ClaudeService
+    from bigair.destinations import Destination
     from bigair.fuel_sources import LiveFuel
     from bigair.travel_rules import TravelRules
     from bigair.trip_service import TripEdges
@@ -363,6 +364,7 @@ def _claude_service(edges: TripEdges | None, rules: TravelRules, cache: Path) ->
     from bigair import claude_io, weather_io
     from bigair.claude_service import ClaudeService
     from bigair.claude_tools import ToolDeps, forecast_from
+    from bigair.dest_sources import load_ioverlander, load_public_land
     from bigair.gpsd_io import current_fix
     from bigair.poi import load_pois, read_note_body
     from bigair.state_file import StateFileError, read_state
@@ -381,12 +383,20 @@ def _claude_service(edges: TripEdges | None, rules: TravelRules, cache: Path) ->
         except StateFileError:
             return None
 
+    iover_dir = os.environ.get("IOVERLANDER_DIR", "")
+    land_file = os.environ.get("PUBLIC_LAND_FILE", "")
+
+    def places() -> list[Destination]:
+        out = load_ioverlander(Path(iover_dir))[0] if iover_dir else []
+        return out + (load_public_land(Path(land_file))[0] if land_file else [])
+
     deps = ToolDeps(
         position=position,
         pois=lambda: load_pois(poi_dir)[0],
         read_note=lambda name: read_note_body(poi_dir, name),
         last_plan=last_plan,
         forecast=forecast_from(weather_io.fetch_forecasts),
+        places=places,
     )
     send = claude_io.make_send(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
     cap = float(os.environ.get("CLAUDE_MONTHLY_CAP_USD") or 25.0)

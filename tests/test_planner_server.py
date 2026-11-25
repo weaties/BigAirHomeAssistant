@@ -279,3 +279,28 @@ def test_claude_endpoints(tmp_path: Path) -> None:
 
 def test_claude_endpoints_absent_without_claude(ok_url: str) -> None:
     assert _req(f"{ok_url}/api/claude/status")[0] == 404
+
+
+def test_claude_chat_endpoint(tmp_path: Path) -> None:
+    class Chatty(_FakeClaude):
+        def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+            return {"text": f"you said {messages[-1]['content']}", "stop": "done", "proposals": []}
+
+    server = make_server(
+        "127.0.0.1", 0, lambda p: {}, tmp_path / "plan.json", 2, lambda: NOW, claude=Chatty()
+    )
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        status, body = _req(
+            f"{url}/api/claude/chat", {"messages": [{"role": "user", "text": "hi"}]}
+        )
+        assert (status, body["text"]) == (200, "you said hi")
+        status, body = _req(
+            f"{url}/api/claude/chat", {"messages": [{"role": "assistant", "text": "x"}]}
+        )
+        assert status == 400
+    finally:
+        server.shutdown()
+        server.server_close()

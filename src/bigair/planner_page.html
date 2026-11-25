@@ -70,6 +70,12 @@
          box-shadow: 0 1px 3px rgba(0,0,0,.4); }
   .poi.on { background: var(--accent); }
   .poi.dim { background: var(--unknown); }
+  .msgs { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; max-height: 50vh; overflow-y: auto; }
+  .msg { padding: 8px 10px; border-radius: 10px; white-space: pre-wrap; max-width: 92%; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+  .msg.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); }
+  textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; resize: vertical; }
   .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); margin-right: 3px; }
 </style>
 </head>
@@ -139,6 +145,18 @@
     <div class="scroll"><table id="chain"></table></div>
   </div>
 
+  <div class="card hidden" id="chatcard">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Ask Claude <small class="muted" id="claudestatus" style="font-weight:normal"></small></h2>
+      <button type="button" id="chat_new">New chat</button>
+    </div>
+    <div class="msgs" id="chatmsgs"></div>
+    <textarea id="chat_in" rows="2" placeholder="Somewhere quiet with water and shade within 150 mi, dog-friendly?"></textarea>
+    <div class="row" style="margin-top:6px"><span class="note" id="chatnote">Claude can look up your POIs, campsites, public land, the plan and the forecast. It only suggests.</span>
+      <span style="flex:1"></span><button type="button" class="primary" id="chat_send">Ask</button></div>
+    <div id="claudeprops"></div>
+  </div>
+
   <div id="results" class="hidden">
     <div id="banners"></div>
 
@@ -171,12 +189,11 @@
 
     <div class="card hidden" id="claudecard">
       <div class="row" style="justify-content:space-between">
-        <h2 style="margin:0">Claude <small class="muted" id="claudestatus" style="font-weight:normal"></small></h2>
+        <h2 style="margin:0">Claude on this plan</h2>
         <button type="button" id="claude_go">Why this way?</button>
       </div>
       <div id="claudeanswer" style="margin-top:8px;white-space:pre-wrap"></div>
-      <div id="claudeprops"></div>
-      <div class="note">Claude only suggests; nothing changes until you accept. It sees your POI notes, this plan, the van's position and the forecast.</div>
+      <div class="note">Suggestions appear under Ask Claude, at the top. Nothing changes until you accept.</div>
     </div>
 
     <div class="card hidden" id="daycard">
@@ -525,6 +542,8 @@ async function claudeStatus() {
       ? `$${st.spent_usd.toFixed(2)} of $${st.cap_usd} this month` + (st.can_start ? "" : " · budget used up")
       : "not set up (no API key on the Pi)";
     $("claude_go").disabled = !st.enabled || !st.can_start;
+    $("chat_send").disabled = !st.enabled || !st.can_start;
+    $("chatcard").classList.remove("hidden");
     if (plan) $("claudecard").classList.remove("hidden");
   } catch { /* planner without Claude */ }
 }
@@ -566,6 +585,49 @@ async function askWhy() {
   }
 }
 $("claude_go").addEventListener("click", askWhy);
+
+// ---------- chat (#93): the conversation lives on this device only ----------
+const chatKey = "planner.chat";
+function chatLoad() { try { return JSON.parse(sessionStorage.getItem(chatKey) || "[]"); } catch { return []; } }
+function chatSave(m) { try { sessionStorage.setItem(chatKey, JSON.stringify(m)); } catch { /* private mode */ } }
+function chatRender() {
+  const m = chatLoad();
+  $("chatmsgs").innerHTML = m.map((x) => `<div class="msg ${x.role}">${esc(x.text)}</div>`).join("");
+  $("chatmsgs").scrollTop = $("chatmsgs").scrollHeight;
+}
+async function chatSend() {
+  const text = $("chat_in").value.trim();
+  if (!text) return;
+  let m = chatLoad();
+  if (m.length && m[m.length - 1].role === "user") m.pop();  // an unanswered question is replaced
+  m.push({ role: "user", text });
+  if (m.length > 23) m = m.slice(m.length - 23);  // keep under the server's limit, starting with the user
+  if (m[0].role !== "user") m.shift();
+  chatSave(m); chatRender();
+  $("chat_in").value = "";
+  $("chat_send").disabled = true;
+  $("chatnote").textContent = "Claude is thinking…";
+  try {
+    const r = await fetch("api/claude/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: m }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    if (j.stop === "done" || j.stop === "turns" || j.stop === "max_tokens") { m.push({ role: "assistant", text: j.text }); chatSave(m); }
+    else { $("chatnote").textContent = j.text; }
+    chatRender();
+    if (j.stop === "done" || j.stop === "turns" || j.stop === "max_tokens") $("chatnote").textContent = "";
+    renderProposals(await (await fetch("api/claude/proposals")).json());
+  } catch (e) {
+    $("chatnote").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
+  } finally {
+    claudeStatus();
+  }
+}
+$("chat_send").addEventListener("click", chatSend);
+$("chat_in").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chatSend(); } });
+$("chat_new").addEventListener("click", () => { chatSave([]); chatRender(); $("chatnote").textContent = ""; });
+chatRender();
+claudeStatus();
+fetch("api/claude/proposals").then((r) => (r.ok ? r.json() : [])).then(renderProposals).catch(() => {});
 
 // ---------- a chain of legs to a far goal (#92) ----------
 async function sketchChain() {
