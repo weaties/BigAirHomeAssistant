@@ -154,6 +154,7 @@ tests/fixtures/      # synthetic data with known-good answers (never real drives
 homeassistant/       # HA config: configuration.yaml + packages/*.yaml
 grafana/provisioning/  # datasources/ and dashboards/*.json
 deploy/              # docker-compose.yml, bootstrap.sh (Pi setup), host/ (systemd + gpsd config), mosquitto.conf, .env.example
+                     #   mac/: planner copy + HA/Grafana relays on a Mac over Tailscale (#105)
 docs/                # pid-register.md, carplay.md, hardware notes; docs/archive/ dated
 .claude/skills/      # domain skills (see Claude Code specifics)
 ```
@@ -541,3 +542,21 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     kept durably in `data/bigair/claude-spend.json`), backed by the Console spend
     limit. Showing spend in HA/Grafana is deferred until a bigair service owns it
     (single Influx writer); the planner page shows it for now.
+42. **2026-11-25 — A Mac can stand in for the phone's path to the Pi** (Dan's request,
+    #105). While the phone is the van router's hotspot uplink, it can't reach the Pi
+    over Tailscale (#104). `deploy/mac/setup.sh` runs a second `bigair planner` on a
+    Mac, listening on the Mac's tailnet address only and reading the tank from the
+    Pi's Mosquitto. It also runs byte relays to the Pi's HA (8123) and Grafana (3000).
+    The Pi stays the only writer and the only HA. The Mac copy has no GPS position,
+    sends no briefing, and keeps its own plan and Claude spend counters (cap $5). The
+    relays are stdlib Python, not socat, because the macOS firewall already allows
+    uv's Python (`docs/hardware/mac-copy.md`). Like Decision #30, nothing depends on it.
+43. **2026-11-25 — Home Assistant is public through the Mac's Funnel; nothing else
+    is** (Dan's request, #105). Someone off the tailnet reaches HA at the Mac's
+    `ts.net` URL, with HA's login (per-person non-admin users, 2FA) as the gate and a
+    5-attempt IP ban. The planner and Grafana have no login, so they stay
+    tailnet-only. HA 2026.11 keeps `http:` settings (trusted proxy, ban) in
+    `.storage/http`, which git doesn't hold, so the steps live in
+    `docs/hardware/mac-copy.md`. If the Pi exposes HA itself later, HelmLog's
+    pattern applies (`docs/https-deployment.md` there): Cloudflare Tunnel with Access
+    for anything that has no login.
