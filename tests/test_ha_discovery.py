@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from bigair.ha_discovery import (
     AVAILABILITY_TOPIC,
+    ELECTRICAL_STATE_TOPIC,
     FUEL_STATE_TOPIC,
     MANUAL_FILL_TOPIC,
     OFFLINE,
@@ -81,8 +82,8 @@ def test_state_topics_and_templates_point_at_the_payload_keys() -> None:
     for c in _configs().values():
         if "command_topic" in c or c["object_id"] == "last_fill_up":
             continue  # the button has no state; last fill-up has its own topic
-        if c["state_topic"] == VAN_STATE_TOPIC:
-            continue  # trip and freshness entities: tests/test_ha_van_state.py
+        if c["state_topic"] in (VAN_STATE_TOPIC, ELECTRICAL_STATE_TOPIC):
+            continue  # van: test_ha_van_state.py; electrical: test below
         assert c["state_topic"] == FUEL_STATE_TOPIC
         key = {
             "fuel_stale": "stale",
@@ -127,3 +128,20 @@ def test_last_fill_up_sensor_reads_the_result_topic() -> None:
     cfg = json.loads(topics["homeassistant/sensor/bigair/last_fill_up/config"])
     assert cfg["state_topic"] == "bigair/fill_up/result"
     assert cfg["json_attributes_topic"] == "bigair/fill_up/result"
+
+
+def test_electrical_sensors_read_the_trackers_keys() -> None:
+    """#109: every Victron sensor's template key is in the tracker's payload."""
+    from bigair.electrical import ElectricalTracker
+
+    keys = set(ElectricalTracker.KEYS)
+    configs = [c for c in _configs().values() if c.get("state_topic") == ELECTRICAL_STATE_TOPIC]
+    assert {c["object_id"] for c in configs} == keys
+    for c in configs:
+        assert c["value_template"] == f"{{{{ value_json.{c['object_id']} }}}}"
+
+
+def test_text_states_have_no_unit_or_state_class() -> None:
+    c = next(c for c in _configs().values() if c.get("object_id") == "solar_state")
+    assert "unit_of_measurement" not in c
+    assert "state_class" not in c

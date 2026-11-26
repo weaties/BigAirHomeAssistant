@@ -127,6 +127,8 @@ services:
     volumes:
       - ../data/bigair:/data  # durable fuel state (Decision #22); gitignored
       - gauge-feed:/feed  # dash display copy (#17), not durable
+      # Victron BLE (#109): bleak reaches the host's BlueZ over the system D-Bus.
+      - /run/dbus:/run/dbus:ro
     stop_grace_period: 15s  # time to save state on SIGTERM
 
   planner:

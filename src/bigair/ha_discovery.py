@@ -27,6 +27,7 @@ MANUAL_FILL_TOPIC = "bigair/fill_up/manual"  # HA button → bigair ("full")
 FILL_RESPONSE_TOPIC = "bigair/fill_up/response"  # HA form / notification reply → bigair
 FILL_RESULT_TOPIC = "bigair/fill_up/result"  # bigair → HA: what was logged, or why not
 VAN_STATE_TOPIC = "bigair/van/state"  # retained JSON: trip, battery, freshness (#64)
+ELECTRICAL_STATE_TOPIC = "bigair/electrical/state"  # retained JSON: Victron devices (#109)
 ONLINE = "online"
 OFFLINE = "offline"
 
@@ -61,6 +62,7 @@ class _Sensor:
     stale_gated: bool = False
     state_topic: str = FUEL_STATE_TOPIC
     state_class: str = "measurement"
+    numeric: bool = True  # False: a text state (no unit, no state class)
 
 
 SENSORS = (
@@ -109,6 +111,47 @@ VAN_SENSORS = (
 )
 VAN_KEYS = (*(s.object_id for s in VAN_SENSORS), "ignition")
 
+# House electrical from the Victron devices over BLE (#109). Keys match
+# ElectricalTracker.KEYS; a device that's gone quiet publishes null (unknown).
+_E = ELECTRICAL_STATE_TOPIC
+ELECTRICAL_SENSORS = (
+    _Sensor("house_soc_pct", "House battery", "%", 1, "battery", state_topic=_E),
+    _Sensor("house_voltage_v", "House voltage", "V", 2, "voltage", state_topic=_E),
+    _Sensor("house_current_a", "House current", "A", 2, "current", state_topic=_E),
+    _Sensor("house_power_w", "House power", "W", 0, "power", state_topic=_E),
+    _Sensor(
+        "house_consumed_ah", "House consumed", "Ah", 1, icon="mdi:battery-minus", state_topic=_E
+    ),
+    _Sensor("house_time_to_go_min", "House time to go", "min", 0, "duration", state_topic=_E),
+    _Sensor("solar_power_w", "Solar power", "W", 0, "power", state_topic=_E),
+    _Sensor(
+        "solar_yield_today_wh",
+        "Solar today",
+        "Wh",
+        0,
+        "energy",
+        state_topic=_E,
+        state_class="total_increasing",  # resets at midnight, which HA allows
+    ),
+    _Sensor("solar_current_a", "Solar charge current", "A", 1, "current", state_topic=_E),
+    _Sensor(
+        "solar_state", "Solar charger", "", 0, icon="mdi:solar-power", state_topic=_E, numeric=False
+    ),
+    _Sensor(
+        "dcdc_state",
+        "Alternator charger",
+        "",
+        0,
+        icon="mdi:car-battery",
+        state_topic=_E,
+        numeric=False,
+    ),
+    _Sensor("dcdc_input_voltage_v", "Starter battery", "V", 2, "voltage", state_topic=_E),
+    _Sensor(
+        "dcdc_output_voltage_v", "Alternator charger output", "V", 2, "voltage", state_topic=_E
+    ),
+)
+
 _ROUNDING = {
     "tank_gal": 2,
     "range_mi": 0,
@@ -129,7 +172,7 @@ def _sensor_config(s: _Sensor) -> dict[str, object]:
         "availability": [_ONLINE, _NOT_STALE] if s.stale_gated else [_ONLINE],
         "availability_mode": "all",
     }
-    if s.device_class != "timestamp":
+    if s.device_class != "timestamp" and s.numeric:
         config["unit_of_measurement"] = s.unit
         config["state_class"] = s.state_class
         config["suggested_display_precision"] = s.precision
@@ -237,7 +280,7 @@ def discovery_messages() -> list[tuple[str, str]]:
             f"{DISCOVERY_PREFIX}/sensor/{NODE_ID}/{s.object_id}/config",
             json.dumps(_sensor_config(s), sort_keys=True),
         )
-        for s in (*SENSORS, *VAN_SENSORS)
+        for s in (*SENSORS, *VAN_SENSORS, *ELECTRICAL_SENSORS)
     ]
     out.append(
         (
