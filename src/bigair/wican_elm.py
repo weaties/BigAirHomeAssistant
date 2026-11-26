@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -89,7 +90,7 @@ async def poll_samples(
                 round_no += 1
                 responses = {pid: await client.query("01" + pid) for pid in pids}
                 responses["ATRV"] = await client.query("ATRV")
-                yield sample_from_responses(datetime.now(UTC), responses)
+                yield sample_from_responses(datetime.now(UTC), responses, time.monotonic())
                 elapsed = asyncio.get_running_loop().time() - started
                 await asyncio.sleep(max(0.0, interval_s - elapsed))
             except (OSError, ConnectionError, TimeoutError) as e:

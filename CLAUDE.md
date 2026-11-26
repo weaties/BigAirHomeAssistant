@@ -541,3 +541,13 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     kept durably in `data/bigair/claude-spend.json`), backed by the Console spend
     limit. Showing spend in HA/Grafana is deferred until a bigair service owns it
     (single Influx writer); the planner page shows it for now.
+44. **2026-11-26 — The fuel model measures time on the monotonic clock** (#107). A cold
+    boot started the Pi's clock 6.55 days behind (the Pi 5's RTC has no battery, and
+    chrony doesn't keep timesyncd's clock file). When chrony stepped it at the GPS fix
+    while the van was moving, the gap estimate (speed × wall-clock Δt ÷ mpg) booked
+    about 169 gal, and the tank showed −129 gal. Now the edge stamps
+    `time.monotonic()` on each `ObdSample` and the integrator uses only that for Δt
+    and ordering. No gap over an hour is estimated. The bootstrap installs
+    `fake-hwclock`, so a cold boot starts near the last shutdown. An RTC battery
+    would close the rest. Amends Decision #24: Influx writes already waited for sync,
+    but the fuel model didn't need to wait, it needed a clock that never steps.

@@ -47,6 +47,13 @@ belong in one constants block, never as magic numbers.
 
 ## Integration rules
 
+- **Δt comes from the monotonic clock** the edge stamps on each sample
+  (`ObdSample.mono_s`, #107), never the wall clock. The Pi has no RTC battery:
+  after a power-off it boots behind and chrony steps the clock forward at the GPS
+  fix. On 2026-11-26 a 6.55-day step at 18 mph was booked as a "gap" of about
+  169 gal. Duplicates and ordering are judged on monotonic time too. Wall time is
+  only for timestamps.
+- **No gap estimate over 1 h** (`MAX_GAP_ESTIMATE_S`): log it and count nothing.
 - **Trapezoidal** between consecutive samples when Δt ≤ 5 s.
 - Gap > 5 s with the ignition on: don't bridge with the last rate. Estimate
   `gap_gal = gap_distance_mi ÷ mpg_rolling` (GPS distance), add it to
