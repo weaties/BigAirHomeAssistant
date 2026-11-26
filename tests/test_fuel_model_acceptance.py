@@ -84,3 +84,26 @@ def test_instant_mpg_is_none_at_idle(drive: Drive) -> None:
     model = _fresh_model(drive)
     _run(model, drive, drive.expected["times"]["idle_mid"])
     assert model.mpg_instant_30s is None
+
+
+def test_a_mid_drive_clock_step_leaves_the_tank_unchanged(drive: Drive) -> None:
+    """#107: the same drive, but the wall clock starts 6.55 days behind and chrony
+    steps it forward partway through, while moving. The edge's monotonic time is
+    untouched, so the tank must match the fixture's hand-derived answer exactly as
+    if nothing had happened."""
+    from dataclasses import replace
+    from datetime import timedelta
+
+    exp = drive.expected["pre_fill"]
+    samples = drive.until(parse_ts(exp["at"]))
+    t0 = samples[0].ts
+    step_at = next(i for i, s in enumerate(samples) if i > 100 and (s.speed_mph or 0) > 10)
+    behind = timedelta(seconds=566_034)
+    model = _fresh_model(drive)
+    model.state = replace(model.state, ts=t0 - behind)
+    for i, s in enumerate(samples):
+        mono = (s.ts - t0).total_seconds()
+        model.update(replace(s, ts=s.ts - behind if i < step_at else s.ts, mono_s=mono))
+    assert model.state.gap_gal == pytest.approx(0.0, abs=1e-9)
+    assert model.tank_gal == pytest.approx(exp["tank_gal"], abs=0.01)
+    assert model.mpg_rolling == pytest.approx(exp["mpg_rolling"], abs=0.01)

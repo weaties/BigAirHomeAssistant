@@ -124,7 +124,9 @@ def _value(raw: str | None, pid: str) -> float | None:
     raise KeyError(pid)
 
 
-def sample_from_responses(ts: datetime, responses: dict[str, str]) -> ObdSample:
+def sample_from_responses(
+    ts: datetime, responses: dict[str, str], mono_s: float | None = None
+) -> ObdSample:
     """One ObdSample from a polling round. The ECU answering at all means ignition on.
 
     Missing values stay None, never 0, so the fuel model can tell "no data"
@@ -146,4 +148,5 @@ def sample_from_responses(ts: datetime, responses: dict[str, str]) -> ObdSample:
         coolant_temp_c=coolant,
         oil_temp_c=oil,
         ambient_temp_c=ambient,
+        mono_s=mono_s,
     )

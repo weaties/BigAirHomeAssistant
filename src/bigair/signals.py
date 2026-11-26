@@ -48,6 +48,9 @@ class ObdSample:
     coolant_temp_c: float | None = None
     oil_temp_c: float | None = None
     ambient_temp_c: float | None = None
+    # time.monotonic() when the edge read it (#107). Time between samples comes from
+    # this, because the wall clock steps when chrony syncs after a cold boot.
+    mono_s: float | None = None
 
 
 @dataclass(frozen=True)

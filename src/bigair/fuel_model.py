@@ -37,6 +37,8 @@ class FuelModelConfig:
 
 
 MAX_RATE_GPH = 40.0  # anything above is a decoding error, not a V6 diesel
+MAX_GAP_ESTIMATE_S = 3600.0  # longer gaps aren't estimated: no clock is that trustworthy
+CLOCK_STEP_WARN_S = 5.0  # wall and monotonic time disagreeing by more → the clock stepped
 STALE_AFTER_S = 60.0  # no valid fuel rate this long with ignition on → stale
 ROLLING_CHUNK_MI = 1.0  # rolling-window granularity; the oldest chunk is pro-rated
 CHECKPOINT_EVERY_S = 10.0  # counter history, so a late-confirmed fill applies at its own time
@@ -90,7 +92,7 @@ class FuelModel:
     def update(self, sample: ObdSample) -> FuelState:
         """Integrate one sample; return the new state (/fuel-model integration rules)."""
         last = self._last
-        if last is not None and sample.ts <= last.ts:
+        if last is not None and _seconds_between(last, sample) <= 0:
             return self.state  # duplicate or out of order
         self._trim_instant(sample.ts)
         rate = sample.fuel_rate_gph
@@ -117,9 +119,14 @@ class FuelModel:
 
         added = gap = miles = 0.0
         if last is not None and last.ignition and last.fuel_rate_gph is not None:
-            dt = (sample.ts - last.ts).total_seconds()
+            dt = _seconds_between(last, sample)
             miles = ((last.speed_mph or 0.0) + (sample.speed_mph or 0.0)) / 2 * dt / 3600
-            if dt <= self.config.max_gap_s:
+            if dt > MAX_GAP_ESTIMATE_S:
+                # Backstop (#107): an hour-plus gap with the ignition on is a clock or
+                # data fault, not driving. Count nothing rather than guess.
+                logger.warning("not estimating a {:.0f} s gap at {}", dt, sample.ts)
+                miles = 0.0
+            elif dt <= self.config.max_gap_s:
                 added = (last.fuel_rate_gph + rate) / 2 * dt / 3600
                 self._record(sample.ts, miles, added)
             else:
@@ -323,3 +330,18 @@ class FuelModel:
     def mpg_since_full(self) -> float | None:
         """True mpg of the most recent full-to-full interval, if any."""
         return self.state.mpg_since_full
+
+
+def _seconds_between(a: ObdSample, b: ObdSample) -> float:
+    """Seconds from sample a to b: monotonic when both have it (#107), else wall clock.
+
+    After a cold boot the Pi's wall clock can be days behind until chrony steps it
+    from GPS. Measured on the wall clock, that step looked like days of driving.
+    """
+    wall = (b.ts - a.ts).total_seconds()
+    if a.mono_s is None or b.mono_s is None:
+        return wall
+    mono = b.mono_s - a.mono_s
+    if abs(wall - mono) > CLOCK_STEP_WARN_S:
+        logger.warning("wall clock stepped {:+.0f} s between samples at {}", wall - mono, b.ts)
+    return mono

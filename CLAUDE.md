@@ -560,3 +560,13 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     `docs/hardware/mac-copy.md`. If the Pi exposes HA itself later, HelmLog's
     pattern applies (`docs/https-deployment.md` there): Cloudflare Tunnel with Access
     for anything that has no login.
+44. **2026-11-26 — The fuel model measures time on the monotonic clock** (#107). A cold
+    boot started the Pi's clock 6.55 days behind (the Pi 5's RTC has no battery, and
+    chrony doesn't keep timesyncd's clock file). When chrony stepped it at the GPS fix
+    while the van was moving, the gap estimate (speed × wall-clock Δt ÷ mpg) booked
+    about 169 gal, and the tank showed −129 gal. Now the edge stamps
+    `time.monotonic()` on each `ObdSample` and the integrator uses only that for Δt
+    and ordering. No gap over an hour is estimated. The bootstrap installs
+    `fake-hwclock`, so a cold boot starts near the last shutdown. An RTC battery
+    would close the rest. Amends Decision #24: Influx writes already waited for sync,
+    but the fuel model didn't need to wait, it needed a clock that never steps.

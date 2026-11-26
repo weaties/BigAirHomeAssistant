@@ -61,9 +61,14 @@ preflight() {
 }
 
 install_packages() {
-  log "Packages: git, jq, chrony, openssl, curl"
+  log "Packages: git, jq, chrony, fake-hwclock, openssl, curl"
   sudo apt-get update -qq
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git jq chrony openssl curl ca-certificates
+  # fake-hwclock (#107): the Pi 5's RTC has no battery and chrony doesn't keep
+  # timesyncd's clock file, so after a power-off the clock booted days behind until
+  # the GPS fix. fake-hwclock saves the time hourly and at shutdown and restores it
+  # early in boot, so a cold boot starts at most an hour (or one power-off) behind.
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git jq chrony fake-hwclock \
+    openssl curl ca-certificates
 
   if command -v docker >/dev/null && sudo docker compose version >/dev/null 2>&1; then
     echo "Docker already installed: $(sudo docker --version)"
