@@ -47,7 +47,7 @@ def _package_entities() -> set[str]:
 # Entities from integrations added in HA's UI, which git can't derive. Each id was read
 # from the Pi's entity registry; renaming the device in HA changes it.
 UI_ENTITIES = {
-    "light.bed_lights",  # Tapo L930 strip, tplink integration (#68)
+    "light.van_bed_lights",  # Tapo L930 strip, tplink integration (#68)
 }
 
 

@@ -622,7 +622,7 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
 49. **2026-11-27 — No HomeKit Bridge; the strip lives in HA only** (Dan: "I don't need the
     Siri integration, just the ha"; supersedes the HomeKit half of #48). `homekit:` and
     the `zeroconf` it pulled in are gone, so #27's no-discovery rule holds again. The
-    strip (entity `light.bed_lights`, device "bed lights") is a tile on the Van
+    strip (entity `light.van_bed_lights`, device "bed lights") is a tile on the Van
     dashboard. It's a UI-integration entity, so `tests/test_ha_dashboard.py` keeps it in
     a short list of ids checked against the Pi's entity registry. Tapo firmware 1.4.x
     also needed the Tapo app's Third-Party Compatibility switch on before HA could
