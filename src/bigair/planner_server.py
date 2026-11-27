@@ -6,7 +6,7 @@
 - POST /api/pois         → re-run the POI search on the cached plan's route with
                            a new reach (#88), without re-planning, and update the cache
 - POST /api/destinations → where to spend the next nights, from a start (#91)
-- POST /api/chain        → a rough chain of legs and stays to a far goal (#92)
+- POST /api/chain        → slow mode's days to a far destination, with layovers (#117)
 - GET  /api/claude/status, POST /api/claude/explain, GET /api/claude/proposals,
   POST /api/claude/proposals/<id>/accept|dismiss, POST /api/claude/chat (#93)
   → Claude (#89). Questions run

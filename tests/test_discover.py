@@ -162,36 +162,106 @@ def test_discover_reads_a_utc_departure_in_the_phones_time_zone() -> None:
     assert r.options[0].drive.fits
 
 
-# --- a chain of legs to a far goal (#92) -------------------------------------------
+# --- slow mode's days to a far destination (#117) -----------------------------------
 
 
-def test_chain_plan_sketches_legs_and_snaps_to_destinations() -> None:
-    seen: list[tuple[str, str, bool]] = []
+def _walmart_page(seg: object, token: object, query: str, kind: object) -> dict[str, Any]:
+    assert query == "Walmart Supercenter" and kind is None
+    return {
+        "places": [
+            {"displayName": {"text": "Walmart Supercenter"},
+             "location": {"latitude": 42.5, "longitude": -111.0}},
+            {"displayName": {"text": "Bob's Tires"},
+             "location": {"latitude": 42.4, "longitude": -111.0}},
+        ]
+    }  # fmt: skip
+
+
+def test_chain_plan_scores_stops_falls_back_to_walmart_and_caches_the_route() -> None:
+    routes: list[tuple[str, str, bool]] = []
+    searches: list[str] = []
 
     def route(o: str, d: str, via: list[str], avoid: bool, alt: bool) -> dict[str, Any]:
-        seen.append((o, d, avoid))
-        return _route(o, "44.0,-111.0", via, avoid)  # ~276 crow mi → ~331 road mi
+        routes.append((o, d, avoid))
+        return _route(o, "44.0,-111.0", via, avoid)  # ~331 road mi at 45 mph: 2+ days
 
-    edges = _edges(route=route, pois=lambda: ([SPRINGS], []), ioverlander=lambda: ([PULLOUT], []))
-    req = ChainRequest("here", "Goal Town", by=datetime(2027, 5, 16).date(), utc_offset_min=-420)
+    def search(seg: object, token: object, query: str, kind: object) -> dict[str, Any]:
+        searches.append(query)
+        return _walmart_page(seg, token, query, kind)
+
+    edges = _edges(
+        route=route,
+        search=search,
+        pois=lambda: ([SPRINGS], []),
+        ioverlander=lambda: ([PULLOUT], []),
+    )
+    req = ChainRequest("here", "Goal Town", layovers=(1,), utc_offset_min=-420)
     c = chain_plan(req, edges)
-    assert seen == [("40.00000,-111.00000", "Goal Town", True)]
-    # 6 days from May 10 → up to 3 legs of ~110 mi, well under the ceiling.
-    assert len(c.chain.legs) == 3
-    assert c.chain.legs[0].depart.isoformat() == "2027-05-10"
+    assert routes == [("40.00000,-111.00000", "Goal Town", True)]
+    # Day 1: Springs (a vault destination). The plain pullout has nothing near it.
+    # Day 2: nothing worth stopping for in reach, so the Walmart. Day 3: the goal.
+    assert [leg.kind for leg in c.chain.legs] == ["spot", "walmart", "goal"]
+    assert c.chain.legs[0].to is not None and c.chain.legs[0].to.name == "Springs"
+    assert [leg.depart.date().isoformat() for leg in c.chain.legs] == [
+        "2027-05-10", "2027-05-12", "2027-05-13"
+    ]  # fmt: skip
+    assert c.chain.legs[0].depart.hour == 10
+
     j = chain_to_json(c)
     import json
 
     json.dumps(j)
-    assert j["legs"][-1]["is_goal"] is True
-    assert j["legs"][0]["name"]  # snapped or "Open spot"
-    assert j["stay_nights"] == 3
+    assert [leg["nights"] for leg in j["legs"]] == [2, 1, 0]
+    assert j["legs"][1]["name"] == "Walmart Supercenter"
+    assert j["legs"][1]["source"] == "walmart"
+    assert j["max_day_mi"] == 300 and j["arrive_by"] == "15:00"
+    assert j["arrive"].startswith("2027-05-13")
+
+    # A layover change re-plans without paying for the route or the search again.
+    n = len(searches)
+    c2 = chain_plan(ChainRequest("here", "Goal Town", layovers=(0, 2), utc_offset_min=-420), edges)
+    assert len(routes) == 1 and len(searches) == n
+    assert [leg.depart.date().isoformat() for leg in c2.chain.legs] == [
+        "2027-05-10", "2027-05-11", "2027-05-14"
+    ]  # fmt: skip
+
+
+def test_a_failed_walmart_search_warns_and_is_not_cached() -> None:
+    def search(*a: object) -> dict[str, Any]:
+        raise OSError("quota")
+
+    edges = _edges(search=search, route=lambda o, d, v, a, alt: _route(o, "44.0,-111.0", v, a))
+    c = chain_plan(ChainRequest("here", "Goal Town", utc_offset_min=-420), edges)
+    assert any("Walmart search failed" in w for w in c.warnings)
+    assert edges.chain_cache == {}
+    assert c.chain.legs[0].kind == "open"
 
 
 def test_chain_request_validation() -> None:
-    req = chain_request_from_json({"origin": "here", "goal": "Tucson", "by": "2027-06-01"})
-    assert (req.goal, req.by.isoformat()) == ("Tucson", "2027-06-01")
-    with pytest.raises(TripError, match="goal"):
-        chain_request_from_json({"origin": "here", "by": "2027-06-01"})
+    req = chain_request_from_json(
+        {"origin": "here", "goal": "Tucson", "layovers": [2, 0, "1"], "by": "2027-06-01"}
+    )
+    assert (req.goal, req.layovers) == ("Tucson", (2, 0, 1))
+    assert req.by is not None and req.by.isoformat() == "2027-06-01"
+    assert chain_request_from_json({"origin": "here", "goal": "Tucson"}).by is None
+    utc = chain_request_from_json(
+        {"origin": "here", "goal": "X", "depart": "2027-05-10T16:00:00Z", "utc_offset_min": -420}
+    )
+    assert utc.depart is not None and utc.depart.hour == 9
+    with pytest.raises(TripError, match="destination"):
+        chain_request_from_json({"origin": "here"})
     with pytest.raises(TripError, match="date"):
         chain_request_from_json({"origin": "here", "goal": "X", "by": "June"})
+    with pytest.raises(TripError, match="negative"):
+        chain_request_from_json({"origin": "here", "goal": "X", "layovers": [-1]})
+
+
+def test_a_one_day_trip_skips_the_walmart_search() -> None:
+    searches: list[object] = []
+    edges = _edges(
+        search=lambda *a: searches.append(a) or {},
+        route=lambda o, d, v, a, alt: _route(o, "41.5,-111.0", v, a),  # ~124 road mi
+    )
+    c = chain_plan(ChainRequest("here", "Near Town", utc_offset_min=-420), edges)
+    assert [leg.kind for leg in c.chain.legs] == ["goal"]
+    assert searches == []

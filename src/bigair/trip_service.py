@@ -19,8 +19,9 @@ from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from bigair.byways import choose_route
-from bigair.chain import Chain, Leg, sketch_chain
+from bigair.chain import Chain, Leg, plan_days
 from bigair.day_plan import Candidate, DayBudget, Proposal, day_budget, propose, score_poi
+from bigair.dest_sources import WALMART_QUERY, decode_walmarts
 from bigair.destinations import (
     DEDUPE_MI,
     Destination,
@@ -51,6 +52,7 @@ from bigair.fuel_sources import (
     drift_per_day,
     encode_polyline,
     mirror_return,
+    segments,
 )
 from bigair.poi_near import LookupCache, PoiHit, Reach, near_route, reach_from_json
 from bigair.route_weather import (
@@ -140,6 +142,10 @@ class TripEdges:
     byways: Callable[[], ByWayIndex | None] | None = None
     """Scenic byway lines for slow mode's route choice (#100)."""
     """Google Places campgrounds in a (south, west, north, east) box: the fallback."""
+    chain_cache: dict[tuple[str, str, bool], tuple[RouteInfo, list[Destination]]] = field(
+        default_factory=dict
+    )
+    """Routes and Walmart searches for slow mode's days, reused on layover changes (#117)."""
 
 
 @dataclass(frozen=True)
@@ -733,14 +739,21 @@ def discover_request_from_json(d: dict[str, Any]) -> DiscoverRequest:
     )
 
 
-# --- a chain of legs to a far goal (#92) -------------------------------------------
+# --- slow mode's days to a far destination (#117) -----------------------------------
+
+CHAIN_CACHE_SIZE = 8
 
 
 @dataclass(frozen=True)
 class ChainRequest:
     origin: str
     goal: str
-    by: date
+    depart: datetime | None = None
+    """Day 1's departure; None: the next one at the rules' time (10:00)."""
+    layovers: tuple[int, ...] = ()
+    """Extra days at each stop, in stop order; missing ones are 0."""
+    by: date | None = None
+    """Only warns: the arrival date comes from the layovers."""
     utc_offset_min: int | None = None
 
 
@@ -748,33 +761,68 @@ class ChainRequest:
 class ChainResult:
     request: ChainRequest
     generated_at: datetime
-    start: date
+    depart: datetime
     route_mi: float
     chain: Chain
     warnings: tuple[str, ...]
+    rules: TravelRules = field(default_factory=TravelRules)
+
+
+def _walmarts(route: RouteInfo, edges: TripEdges, warnings: list[str]) -> list[Destination]:
+    try:
+        found = [
+            w
+            for seg in segments(route)
+            for w in decode_walmarts(edges.search(seg, None, WALMART_QUERY, None))
+        ]
+    except (OSError, ValueError, KeyError, RuntimeError) as e:
+        warnings.append(f"Walmart search failed ({e}); days without a spot end at an open spot.")
+        return []
+    kept: list[Destination] = []
+    for w in found:
+        if all(crow_mi((w.lat, w.lon), (k.lat, k.lon)) > DEDUPE_MI for k in kept):
+            kept.append(w)
+    return kept
 
 
 def chain_plan(
     req: ChainRequest, edges: TripEdges, rules: TravelRules | None = None
 ) -> ChainResult:
-    """Sketch the legs and stays to ``goal`` by ``by``, starting at the next departure."""
+    """The driving days and stops to ``goal``, with Dan's layovers.
+
+    The route and the Walmart search are cached by (origin, goal), so changing a
+    layover re-plans without paying for them again.
+    """
     rules = rules or TravelRules()
     now = edges.now()
     warnings: list[str] = []
     origin_str, _ = _resolve_origin(req.origin, edges)
-    start = _slow_depart(now, rules, req.utc_offset_min).date()
-    try:
-        body = edges.route(origin_str, req.goal, [], rules.avoid_interstates, False)
-        route = decode_route(body)
-    except ValueError as e:
-        raise TripError(f"no route from {req.origin} to {req.goal}") from e
+    depart = req.depart or _slow_depart(now, rules, req.utc_offset_min)
+    key = (origin_str, req.goal.strip().lower(), rules.avoid_interstates)
+    cached = edges.chain_cache.get(key)
+    if cached is None:
+        try:
+            body = edges.route(origin_str, req.goal, [], rules.avoid_interstates, False)
+            route = decode_route(body)
+        except ValueError as e:
+            raise TripError(f"no route from {req.origin} to {req.goal}") from e
+        # A trip that fits in one day needs no overnight fallback: skip the search.
+        window = day_budget(depart, rules, route.points[-1]).window_min
+        one_day = route.total_mi <= rules.max_day_mi and route.duration_s / 60 <= window
+        walmarts = [] if one_day else _walmarts(route, edges, warnings)
+        if not warnings:  # a failed search isn't cached; the next re-plan retries it
+            while len(edges.chain_cache) >= CHAIN_CACHE_SIZE:
+                edges.chain_cache.pop(next(iter(edges.chain_cache)))
+            edges.chain_cache[key] = (route, walmarts)
+    else:
+        route, walmarts = cached
     pois = _load(edges.pois, warnings)
     vault = [
         Destination(p.name, p.lat, p.lon, "poi", None, p.summary, p) for p in pois if p.destination
     ]
     cands = [*vault, *_load(edges.ioverlander, warnings), *_load(edges.public_land, warnings)]
-    c = sketch_chain(route, start, req.by, cands, rules)
-    return ChainResult(req, now, start, route.total_mi, c, tuple(warnings) + c.warnings)
+    c = plan_days(route, depart, cands, walmarts, pois, rules, req.layovers, req.by)
+    return ChainResult(req, now, depart, route.total_mi, c, tuple(warnings) + c.warnings, rules)
 
 
 def chain_to_json(r: ChainResult) -> dict[str, Any]:
@@ -788,23 +836,34 @@ def chain_to_json(r: ChainResult) -> dict[str, Any]:
     return {
         "generated_at": _iso(r.generated_at),
         "goal": r.request.goal,
-        "by": r.request.by.isoformat(),
-        "start": r.start.isoformat(),
+        "by": r.request.by.isoformat() if r.request.by else None,
+        "depart": _iso(r.depart),
+        "arrive": _iso(r.chain.arrive),
         "route_mi": round(r.route_mi),
-        "stay_nights": r.chain.stay_nights,
+        "max_day_mi": round(r.rules.max_day_mi),
+        "arrive_by": f"{r.rules.arrive_by_h:02d}:{r.rules.arrive_by_m:02d}",
         "warnings": list(r.warnings),
         "legs": [
             {
                 "index": leg.index,
-                "depart": leg.depart.isoformat(),
+                "depart": _iso(leg.depart),
                 "name": name(leg),
+                "kind": leg.kind,
                 "source": leg.to.source if leg.to is not None else None,
+                "note": leg.to.note if leg.to is not None else None,
                 "lat": round(leg.point[0], 5),
                 "lon": round(leg.point[1], 5),
                 "is_goal": leg.is_goal,
-                "open": leg.to is None and not leg.is_goal,
+                "open": leg.kind == "open",
                 "approx_mi": round(leg.approx_mi),
+                "drive_min": round(leg.drive_min),
+                "window_min": round(leg.window_min),
+                "end_reason": leg.end_reason,
+                "layover": leg.layover,
                 "nights": leg.nights,
+                "score": round(leg.score, 2),
+                "reasons": list(leg.reasons),
+                "nearby": list(leg.nearby),
             }
             for leg in r.chain.legs
         ],
@@ -817,14 +876,28 @@ def chain_request_from_json(d: dict[str, Any]) -> ChainRequest:
     if not origin:
         raise TripError("give a starting place (or Here)")
     if not goal:
-        raise TripError("give a far goal")
-    try:
-        by = date.fromisoformat(str(d.get("by") or ""))
-    except ValueError as e:
-        raise TripError("the arrive-by date must be YYYY-MM-DD") from e
+        raise TripError("give a destination")
     offset_in = d.get("utc_offset_min")
     offset = None if offset_in in (None, "") else round(_num(offset_in, "utc_offset_min"))
-    return ChainRequest(origin, goal, by, offset)
+    by: date | None = None
+    if d.get("by"):
+        try:
+            by = date.fromisoformat(str(d["by"]))
+        except ValueError as e:
+            raise TripError("the arrive-by date must be YYYY-MM-DD") from e
+    depart: datetime | None = None
+    if d.get("depart"):
+        try:
+            depart = _local(datetime.fromisoformat(str(d["depart"])), offset)
+        except ValueError as e:
+            raise TripError("bad depart time") from e
+    raw = d.get("layovers") or []
+    if not isinstance(raw, list):
+        raise TripError("layovers must be a list of days")
+    layovers = tuple(round(_num(v, "layover")) for v in raw)
+    if any(v < 0 for v in layovers):
+        raise TripError("layovers can't be negative")
+    return ChainRequest(origin, goal, depart, layovers, by, offset)
 
 
 # --- presentation -----------------------------------------------------------------

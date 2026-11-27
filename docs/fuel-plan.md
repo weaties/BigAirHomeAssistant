@@ -226,26 +226,41 @@ beats a far one, and legs that don't fit sink to the bottom with the reason.
 Both files are optional and read on every search. A missing one adds nothing;
 a bad one is a warning.
 
-### Far goal: a rough chain of legs (#92)
+### Get there slow to a far destination (#117)
 
-Under **Where next?**, give a **Far goal** and the date to be there **by**, then
-tap **Sketch the way**. One slow-mode route to the goal is split into legs:
+Pick **Get there slow**, type a destination that's several days away and tap
+**Plan trip**. The planner first lays out the driving days in a **Days to …**
+card, then plans day 1 in detail below it (fuel, weather, POIs, today's drive).
+The **To** field keeps the far destination, so tapping **Plan trip** again
+re-plans from wherever you are. The card replaces #92's date-driven sketch.
 
-- **as many legs as the time allows**, moving every 3 nights, so the days are
-  short;
-- never fewer legs than 300 mi a day needs, and never shorter than 50 mi.
+Every day leaves at 10:00 and must stay within **both** limits: at most 300 mi,
+and arriving by 15:00 (or sunset, if that's earlier). On slow roads the time
+limit usually binds first: at 45 mph a day is 225 mi. Where each day ends is
+picked in this order:
 
-Each stop snaps to the best-scoring destination within 40 mi (your POIs,
-iOverlander, public land). Where there's none, it's an **open spot**: run
-**Where next?** when you get there.
+1. **the destination**, if it fits today;
+2. otherwise **the best spot in reach**: a vault destination, iOverlander site or
+   public land within 40 mi of the route and at least 50 mi along. A spot counts
+   only if it's a vault destination or has things to do (your POIs) within
+   25 mi. It scores its own points plus each nearby POI's score (rating, season
+   and tag weights; negatives count as 0). The highest score wins, so a day can
+   stop short or run long to get somewhere good. Ties go to fewer miles, and
+   distance never scores;
+3. otherwise **the farthest Walmart** in reach (a Places search along the route,
+   made only when the trip takes more than a day). Check that the store allows
+   overnight parking;
+4. otherwise an **open spot** as far along as the rules allow. Day 1's open spot
+   gets a **Find a spot near here** button.
 
-If the date is too close for 3-night stays, the stays shorten and the sketch
-says so. If even 300 mi a day can't make it, it says that instead. A leg that
-snapping pushes over 300 mi is flagged.
+**Layover days** are set per stop: 0 (the default) means one night, then drive on
+in the morning. Changing one re-plans the days at no extra cost, because the
+route and the Walmart search are cached. The arrival date follows from the
+layovers. **Arrive by** is optional and only warns.
 
-It's a frame to improvise against. Only the first leg gets a **Plan this leg**
-button (or **Find a spot near here** for an open spot). Re-sketch from wherever
-you are. Leg miles are approximate (along the route, plus the distance off it).
+Miles and times are estimates from the route's pace. A spot's distance off the
+route counts going in and coming out, at 35 mph in straight-line miles. Day 1's
+detailed plan routes it for real, and that's the number to trust.
 
 ## Trip file
 

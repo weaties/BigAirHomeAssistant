@@ -145,3 +145,32 @@ def load_public_land(path: Path) -> tuple[list[Destination], list[str]]:
         name = _first(props, NAME_KEYS) or f"{kind or 'Public land'} unit {n}"
         out.append(Destination(name, lat, lon, "public_land", kind, None))
     return out, warnings
+
+
+WALMART_QUERY = "Walmart Supercenter"
+"""Search-along-route query for slow mode's overnight fallback (#117)."""
+
+
+def decode_walmarts(body: dict[str, Any]) -> list[Destination]:
+    """One Places search page → the Walmarts in it, as overnight fallbacks (#117).
+
+    Text search also returns nearby non-Walmart places, so only names with
+    "Walmart" in them are kept. Not every store allows overnight parking.
+    """
+    out: list[Destination] = []
+    for p in body.get("places") or []:
+        name = str((p.get("displayName") or {}).get("text") or "")
+        loc = p.get("location") or {}
+        if "walmart" not in name.lower() or "latitude" not in loc or "longitude" not in loc:
+            continue
+        out.append(
+            Destination(
+                name,
+                float(loc["latitude"]),
+                float(loc["longitude"]),
+                "walmart",
+                None,
+                p.get("formattedAddress"),
+            )  # fmt: skip
+        )
+    return out

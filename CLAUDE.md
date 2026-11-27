@@ -142,7 +142,7 @@ src/bigair/          # all Python; one small module per concern
   poi.py / poi_near.py  # vault POI notes → Poi; POIs in reach of a planned route (#88)
   travel_rules.py / day_plan.py  # slow mode: rules, day budget, POI score, proposal (#90)
   destinations.py / dest_sources.py  # where next: candidates, ranking; iOverlander + public land (#91)
-  chain.py           #   rough chain of legs and stays to a far goal (#92)
+  chain.py           #   slow mode's days to a far destination: scored stops, layovers (#117)
   byways.py          #   scenic byway miles on a route; most scenic alternative (#100)
   claude_agent.py    #   Claude tool loop, spend ledger, proposals (#89)
   claude_tools.py / claude_service.py / claude_io.py  # planner tools + state; SDK edge
@@ -627,3 +627,15 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     a short list of ids checked against the Pi's entity registry. Tapo firmware 1.4.x
     also needed the Tapo app's Third-Party Compatibility switch on before HA could
     connect.
+50. **2026-11-27 — Slow mode plans a far destination day by day, with scored stops**
+    (Dan's request, #117; replaces #92's date-driven chain). **Get there slow** to a
+    destination more than a day away lays out the driving days, then plans day 1
+    in detail. Each day must stay under the mileage ceiling **and** arrive inside the
+    window (15:00 or sunset). It ends at the highest-scoring spot in reach, where a
+    spot scores its own points plus those of vault POIs within 25 mi. With no spot
+    worth stopping for, it ends at the farthest Walmart in reach, and failing that at
+    an open spot as far as the rules allow. Dan: "stop short or push long to get
+    somewhere cool … stop at 300 at a Walmart." This amends #40's "300 mi is a
+    ceiling, never a target": distance still never adds to a score, but the fallback
+    day does run to the limit. Layover days are Dan's per stop (default 0, one
+    night). The arrival date follows from them; an arrive-by date only warns.
