@@ -39,6 +39,14 @@ def test_statestream_never_publishes_everything(path: Path) -> None:
     )
 
 
+def test_no_network_discovery() -> None:
+    """Decisions #27 and #49: nothing that loads mDNS/SSDP/DHCP discovery."""
+    doc = _load(HA_DIR / "configuration.yaml")
+    assert isinstance(doc, dict)
+    for key in ("default_config", "homekit", "zeroconf", "ssdp", "dhcp"):
+        assert key not in doc, key
+
+
 def _fill_up() -> dict[str, object]:
     doc = _load(HA_DIR / "packages" / "fill_up.yaml")
     assert isinstance(doc, dict)

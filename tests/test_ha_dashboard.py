@@ -44,6 +44,13 @@ def _package_entities() -> set[str]:
     return out
 
 
+# Entities from integrations added in HA's UI, which git can't derive. Each id was read
+# from the Pi's entity registry; renaming the device in HA changes it.
+UI_ENTITIES = {
+    "light.van_bed_lights",  # Tapo L930 strip, tplink integration (#68)
+}
+
+
 def _entity_refs(node: object) -> set[str]:
     found: set[str] = set()
     if isinstance(node, dict):
@@ -84,7 +91,7 @@ def test_existing_entity_ids_follow_the_naming_rule() -> None:
 
 
 def test_every_referenced_entity_exists() -> None:
-    known = _discovered() | _package_entities()
+    known = _discovered() | _package_entities() | UI_ENTITIES
     refs = _entity_refs(_dash())
     assert refs, "the dashboard references no entities?"
     assert refs <= known, sorted(refs - known)

@@ -291,6 +291,16 @@ views:
             color: blue
             grid_options:
               columns: 6
+          # Tapo L930 strip via HA's TP-Link integration (#68, Decision #49).
+          - type: tile
+            entity: light.van_bed_lights
+            name: Bed lights
+            icon: mdi:led-strip-variant
+            features_position: bottom
+            features:
+              - type: light-brightness
+            grid_options:
+              columns: full
           - type: markdown
             text_only: true
             content: >-
