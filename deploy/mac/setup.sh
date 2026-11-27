@@ -110,6 +110,8 @@ add ANTHROPIC_API_KEY "${ANTHROPIC_API_KEY:-}"
 add CLAUDE_MONTHLY_CAP_USD "${CLAUDE_MONTHLY_CAP_USD:-5}"
 add PLANNER_DAILY_LIMIT "${PLANNER_DAILY_LIMIT:-20}"
 add POI_DIR "${POI_DIR:-}"
+add OBSIDIAN_VAULT "${OBSIDIAN_VAULT:-}"
+add OBSIDIAN_POI_FOLDER "${OBSIDIAN_POI_FOLDER:-}"
 add TZ "${TZ:-}"
 add BRIEFING_TIME " "  # the Pi sends the evening briefing; two would double-notify
 add PLANNER_URL "http://$MAC_TS_IP:8092/"

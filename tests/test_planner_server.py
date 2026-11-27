@@ -322,3 +322,22 @@ def test_claude_briefing_endpoint(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_config_endpoint_tells_the_page_how_to_link_notes(tmp_path: Path) -> None:
+    cfg = {"obsidian": {"vault": "Vault", "folder": "trips/poi"}}
+    server = make_server(
+        "127.0.0.1", 0, lambda p: {}, tmp_path / "plan.json", 20, lambda: NOW, config=cfg
+    )
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        status, body = _req(f"http://127.0.0.1:{server.server_address[1]}/api/config")
+        assert (status, body) == (200, cfg)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_config_endpoint_defaults_to_no_links(ok_url: str) -> None:
+    assert _req(f"{ok_url}/api/config") == (200, {"obsidian": None})

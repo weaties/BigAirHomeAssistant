@@ -226,3 +226,12 @@ def test_many_spots_plan_quickly() -> None:
     assert time.perf_counter() - t < 5.0
     assert c.legs[-1].is_goal
     assert all(leg.cool for leg in c.legs[:-1])
+
+
+def test_nearby_pois_carry_their_note_files() -> None:
+    r = north(500.0)
+    camp = spot("Camp", 250, r)
+    sight = Poi("Sight", lat_at(250, r), -111.05, (), None, file="Sight.md")
+    c = plan_days(r, DEPART, [camp], [sight], RULES)
+    assert c.legs[0].nearby == ("Sight",)
+    assert c.legs[0].nearby_files == ("Sight.md",)

@@ -76,6 +76,8 @@
   .msg.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); }
   textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px;
     background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; resize: vertical; }
+  .night { background: var(--card, #222); border: 2px solid #8a7fd6; border-radius: 999px; padding: 1px 6px; font-size: 12px; white-space: nowrap; }
+  .notelink { text-decoration: none; font-size: 13px; }
   .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); margin-right: 3px; }
 </style>
 </head>
@@ -129,7 +131,7 @@
 
   <div class="card hidden" id="tripcard">
     <div class="row" style="justify-content:space-between">
-      <h2 style="margin:0">Days to <span id="trip_goal"></span></h2>
+      <h2 style="margin:0">Days to <span id="trip_goal"></span> <button type="button" id="trip_whole" class="hidden">Show the whole trip</button></h2>
       <span class="row" style="margin:0">
         <label for="trip_by" style="margin:0">Arrive by (optional)</label>
         <input type="date" id="trip_by" style="width:auto">
@@ -261,6 +263,7 @@ const EMOJI = { clear: "☀️", wet: "🌧️", snow: "❄️", severe: "⚠️
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
                 set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
+let sched = null;  // the day schedule when the plan is a whole multi-day trip (#119)
 let plan = null, optIdx = 0, leg = "out", map = null, layer = null, routeGeo = null;
 const picked = new Set();  // POI names ticked in the list
 let mode = "quick", departAuto = true;
@@ -320,8 +323,7 @@ $("form").addEventListener("submit", async (ev) => {
       $("status").textContent = "Laying out the days…";
       const t = await layOutDays(body.origin, body.destination, body.depart);
       if (t.legs.length > 1) {
-        body.destination = `${t.legs[0].lat},${t.legs[0].lon}`;
-        $("status").textContent = `Day 1 of ${t.legs.length}: planning the drive to ${t.legs[0].name}…`;
+        $("status").textContent = `${t.legs.length} driving days: planning fuel and weather for the whole trip…`;
       } else {
         $("status").textContent = "Planning… this takes about 15 seconds.";
       }
@@ -406,6 +408,55 @@ function legStart(p, which) {
   return new Date(base.getTime() + Number($("shift").value) * 3600000);
 }
 
+// ---------- page config: Obsidian note links (#119) ----------
+let cfg = { obsidian: null };
+fetch("api/config").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) { cfg = j; if (plan) render(plan); renderTrip(); } }).catch(() => {});
+function noteLink(file) {
+  const o = cfg.obsidian;
+  if (!o || !o.vault || !file) return "";
+  const path = (o.folder ? o.folder + "/" : "") + file.replace(/\.md$/, "");
+  const href = `obsidian://open?vault=${encodeURIComponent(o.vault)}&file=${encodeURIComponent(path)}`;
+  return ` <a class="notelink" href="${esc(href)}" title="Open the note in Obsidian">📝</a>`;
+}
+
+// ---------- a multi-day trip's schedule on the whole-trip plan (#119) ----------
+// The whole route is planned at once; the day breaks come from the Days card. Each
+// point's time follows the days (leave each morning, sleep each night), not one
+// continuous drive.
+function isWholeTrip(p) {
+  return !!(trip && p && p.day && p.day.mode === "slow" && !p.request.round_trip &&
+    p.request.destination === trip.goal && p.request.origin === trip.origin);
+}
+function nearestMile(lat, lon) {
+  const { pts, cum } = routeGeo;
+  let best = Infinity, mile = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const d = hav(pts[i], [lat, lon]);
+    if (d < best) { best = d; mile = cum[i]; }
+  }
+  return mile;
+}
+function schedule(p) {
+  if (!isWholeTrip(p) || !routeGeo) return null;
+  const legs = trip.j.legs, total = p.route.one_way_mi, days = [];
+  let start = 0;
+  legs.forEach((l, i) => {
+    const end = l.is_goal ? total : Math.max(start, nearestMile(l.lat, l.lon));
+    days.push({ i, start, end, leave: new Date(l.depart), drive_min: l.drive_min, leg: l });
+    start = end;
+  });
+  return days;
+}
+function dayAt(sched, mile) {
+  return sched.find((d) => mile <= d.end + 1e-6) || sched[sched.length - 1];
+}
+function timeAt(sched, mile) {
+  const d = dayAt(sched, mile);
+  const span = d.end - d.start;
+  const frac = span > 0 ? Math.max(0, Math.min(1, (mile - d.start) / span)) : 0;
+  return new Date(d.leave.getTime() + frac * d.drive_min * 60000 + Number($("shift").value) * 3600000);
+}
+
 // ---------- render ----------
 function render(p) {
   plan = p; optIdx = Math.min(optIdx, p.options.length - 1);
@@ -418,6 +469,7 @@ function render(p) {
   $("results").classList.remove("hidden");
   $("shift").value = 0;
   routeGeo = buildGeo(p);
+  sched = schedule(p);
   if (map) map._fitted = false;
 
   const t = p.tank;
@@ -466,7 +518,7 @@ function renderOptions() {
     return;
   }
   const rows = o.stops.map((s, i) => `<tr><td><b>${i + 1}</b></td><td>${esc(s.name)}<div class="note">${esc(s.note)}</div></td>
-    <td class="num">mi ${s.mile.toFixed(0)}</td><td class="num">${s.arrive_gal.toFixed(1)} → ${(s.arrive_gal + s.buy_gal).toFixed(1)} gal</td>
+    <td class="num">mi ${s.mile.toFixed(0)}${sched && s.mile <= p.route.one_way_mi ? `<div class="note">day ${dayAt(sched, s.mile).i + 1}</div>` : ""}</td><td class="num">${s.arrive_gal.toFixed(1)} → ${(s.arrive_gal + s.buy_gal).toFixed(1)} gal</td>
     <td class="num">${s.buy_gal.toFixed(1)} @ $${s.price_per_gal.toFixed(2)}</td><td class="num">${money(s.cost_usd)}</td></tr>`).join("");
   $("stops").innerHTML = `<tr><th></th><th>Stop</th><th class="num">Where</th><th class="num">Tank</th><th class="num">Buy</th><th class="num">Cost</th></tr>${rows}`;
   const saves = ref && o !== ref ? ` Saves ${money(ref.net_cost_usd - o.net_cost_usd)} vs the ${ref.reserve_mi} mi reserve.` : "";
@@ -482,8 +534,9 @@ function adoptProposal(pr) {
 }
 function renderDay() {
   const d = plan.day;
-  $("daycard").classList.toggle("hidden", !d || d.mode !== "slow");
-  if (!d || d.mode !== "slow") return;
+  const show = d && d.mode === "slow" && !sched;  // a whole trip's days are in the Days card
+  $("daycard").classList.toggle("hidden", !show);
+  if (!show) return;
   const end = { arrive_by: "in by", sunset: "before sunset at", polar_night: "no daylight" }[d.end_reason];
   const sun = d.sunset ? ` · sunset ${fmtTime(new Date(d.sunset))}` : "";
   const pr = (plan.pois && plan.pois.proposal) || d.proposal;
@@ -497,7 +550,8 @@ function renderDay() {
   } else {
     lines.push("No POI stops fit today's window. A shorter leg leaves room for detours.");
   }
-  lines.push(`<span class="note">Then stay ${d.stay_nights} nights. Short days are fine; ${d.max_day_mi} mi is a ceiling, not a target.</span>`);
+  const stay = d.stay_nights ? `Then stay ${d.stay_nights} night${d.stay_nights > 1 ? "s" : ""}. ` : "";
+  lines.push(`<span class="note">${stay}Short days are fine; ${d.max_day_mi} mi is a ceiling, not a target.</span>`);
   $("day").innerHTML = lines.map((l) => `<div style="margin-bottom:4px">${l}</div>`).join("");
 }
 
@@ -532,7 +586,7 @@ function renderDests() {
     const stops = o.stops.length ? `<div class="note">On the way: ${o.stops.map(esc).join(", ")} (+${hm(o.stops_min)})</div>` : "";
     const fit = o.fits ? "" : `<div class="banner err" style="margin-top:4px">${o.problems.map(esc).join("; ")}</div>`;
     return `<tr><td><b>${i + 1}</b></td>
-      <td><b>${esc(o.name)}</b> <span class="tag">${SOURCE_LABEL[o.source] || esc(o.source)}</span>${o.kind ? `<span class="tag">${esc(o.kind)}</span>` : ""}
+      <td><b>${esc(o.name)}</b>${noteLink(o.file)} <span class="tag">${SOURCE_LABEL[o.source] || esc(o.source)}</span>${o.kind ? `<span class="tag">${esc(o.kind)}</span>` : ""}
         ${o.note ? `<div class="note">${esc(o.note)}</div>` : ""}${stops}${fit}</td>
       <td class="num">${o.road_mi} mi<div class="note">${hm(o.drive_min)} · in ${fmtTime(new Date(o.arrive))}</div></td>
       <td class="num"><span title="${esc(why)}">${o.total}</span></td>
@@ -697,21 +751,51 @@ function renderTrip() {
     (j.legs.length ? `<span class="note">${j.route_mi} mi in ${j.legs.length} driving days${arrive}. At most ${j.max_day_mi} mi a day, a ceiling and not a target.</span>` : "");
   $("trip").innerHTML = j.legs.length ? `<tr><th>Day</th><th>To</th><th class="num">Drive</th><th class="num">Layover days</th><th></th></tr>` + j.legs.map((l, i) => {
     const tag = l.kind === "spot" ? (SOURCE_LABEL[l.source] || esc(l.source)) : KIND_TAG[l.kind];
-    const near = l.nearby.length ? `<div class="note">Near: ${l.nearby.map(esc).join(", ")}</div>`
+    const near = l.nearby.length ? `<div class="note">Near: ${l.nearby.map((n, k) => esc(n) + noteLink(l.nearby_files[k])).join(", ")}</div>`
       : l.kind === "spot" && !l.cool ? '<div class="note">Nothing to do nearby that we know of</div>' : "";
     const why = l.reasons.length ? ` title="${esc(l.reasons.join("; "))}"` : "";
     const score = l.kind === "spot" ? ` <span class="tag"${why}>score ${l.score}</span>` : "";
     const lay = l.is_goal ? "" : `<input type="number" min="0" max="30" step="1" value="${l.layover}" data-i="${i}" style="width:64px" aria-label="Layover days at ${esc(l.name)}">`;
-    const btn = i === 0 && l.open ? `<button type="button" id="trip_find">Find a spot near here</button>` : "";
+    const find = i === 0 && l.open ? `<button type="button" id="trip_find">Find a spot near here</button>` : "";
+    const btn = `<button type="button" data-day="${i}">Plan this day</button>${find}`;
     return `<tr><td>${i + 1}<div class="note">${day(l.depart)}</div></td>
-      <td><b>${esc(l.name)}</b> <span class="tag">${tag}</span>${score}${near}</td>
+      <td><b>${esc(l.name)}</b>${noteLink(l.file)} <span class="tag">${tag}</span>${score}${near}</td>
       <td class="num">~${l.approx_mi} mi<div class="note">${hm(l.drive_min)} · ${end[l.end_reason] || ""}</div></td>
       <td class="num">${lay}<div class="note">${l.nights ? l.nights + " night" + (l.nights > 1 ? "s" : "") : ""}</div></td><td>${btn}</td></tr>`;
   }).join("") : "";
   $("trip").querySelectorAll("input[data-i]").forEach((el) => el.addEventListener("change", () => changeLayover(Number(el.dataset.i), el.value)));
   const f = $("trip_find");
   if (f) f.addEventListener("click", findDests);
+  $("trip").querySelectorAll("button[data-day]").forEach((b) => b.addEventListener("click", () => planDay(Number(b.dataset.day))));
+  $("trip_whole").classList.toggle("hidden", !plan || isWholeTrip(plan));
+  // A layover change re-times the whole-trip weather, POIs and fuel days.
+  if (plan && isWholeTrip(plan)) render(plan);
 }
+// One day in detail: slow mode from the night before to that night's stop.
+async function planDay(i) {
+  const legs = trip.j.legs, l = legs[i];
+  const body = {
+    origin: i === 0 ? trip.origin : `${legs[i - 1].lat},${legs[i - 1].lon}`,
+    destination: l.is_goal ? trip.goal : `${l.lat},${l.lon}`,
+    via: [], round_trip: false, depart: l.depart, return_depart: null,
+    reserves: $("reserves").value.split(",").map((x) => x.trim()).filter(Boolean),
+    reach: reach(), mode: "slow", utc_offset_min: -new Date().getTimezoneOffset(),
+  };
+  $("tripstatus").textContent = `Planning day ${i + 1}…`;
+  try {
+    const r = await fetch("api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    if (j.day) j.day.stay_nights = l.nights;  // this trip's nights, not the rules' default
+    if (i > 0) j.warnings = [`Day ${i + 1} only. Its fuel stops start from today's tank; the whole trip's fuel plan is the one to follow.`, ...(j.warnings || [])];
+    render(j);
+    renderTrip();
+    $("results").scrollIntoView({ behavior: "smooth" });
+  } catch (e) {
+    $("tripstatus").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
+  }
+}
+$("trip_whole").addEventListener("click", () => $("form").requestSubmit());
 $("trip_by").addEventListener("change", () => { saveForm(); if (trip) changeLayover(0, (trip.layovers[0] || 0)); });
 
 // ---------- points of interest (#88) ----------
@@ -752,10 +836,10 @@ function renderPois() {
     const camp = h.destination ? '<span class="tag">3-night stay</span>' : "";
     const onRoute = (plan.request.via || []).includes(`${h.lat},${h.lon}`) ? '<span class="tag">on the route</span>' : "";
     return `<tr><td><input type="checkbox" data-i="${i}" ${picked.has(h.name) ? "checked" : ""}></td>
-      <td><b>${esc(h.name)}</b> ${onRoute}${sc}${stars}${season}${camp}
+      <td><b>${esc(h.name)}</b>${noteLink(h.file)} ${onRoute}${sc}${stars}${season}${camp}
         ${h.summary ? `<div class="note">${esc(h.summary)}</div>` : ""}
         ${h.visit_what ? `<div class="note">Visit: ${esc(h.visit_what)}</div>` : ""}</td>
-      <td class="num">mi ${h.mile.toFixed(0)}<div class="note">${fmtTime(new Date(h.eta))}</div></td>
+      <td class="num">mi ${h.mile.toFixed(0)}<div class="note">${sched ? `day ${dayAt(sched, h.mile).i + 1} · ${fmtTime(timeAt(sched, h.mile))}` : fmtTime(new Date(h.eta))}</div></td>
       <td class="num">${detour}</td>
       <td class="num"><input class="visit" type="number" min="0" step="15" data-i="${i}" value="${v ?? ""}" placeholder="?"></td></tr>`;
   }).join("");
@@ -858,7 +942,7 @@ function drawMap() {
   // Base route in grey, then coloured stretches between weather points.
   if (layer) L.polyline(routeGeo.pts, { color: C.unknown, weight: 5, opacity: .5 }).addTo(layer);
   const classes = pts.map((w) => {
-    const when = new Date(start.getTime() + w.offset_s * 1000);
+    const when = sched && w.leg === "out" ? timeAt(sched, w.mile) : new Date(start.getTime() + w.offset_s * 1000);
     const c = cond(p.weather.series[w.series], when);
     return { w, when, c, cls: classify(c, K) };
   });
@@ -894,7 +978,7 @@ function drawMap() {
     const icon = L.divIcon({ className: "", html: `<div class="${cls}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
     const v = visitMin(h);
     L.marker([h.lat, h.lon], { icon, zIndexOffset: 500 })
-      .bindPopup(`<b>${esc(h.name)}</b>${h.summary ? "<br>" + esc(h.summary) : ""}<br>detour ${h.detour_min != null ? hm(h.detour_min) : "unknown"} · visit ${v != null ? hm(v) : "?"}`)
+      .bindPopup(`<b>${esc(h.name)}</b>${noteLink(h.file)}${h.summary ? "<br>" + esc(h.summary) : ""}<br>detour ${h.detour_min != null ? hm(h.detour_min) : "unknown"} · visit ${v != null ? hm(v) : "?"}`)
       .addTo(layer);
   });
   if (o && o.feasible) {
@@ -906,6 +990,17 @@ function drawMap() {
         .addTo(layer);
     });
   }
+  // A whole multi-day trip: a moon at each night's stop (#119).
+  (sched || []).filter((d) => !d.leg.is_goal).forEach((d) => {
+    const l = d.leg;
+    const icon = L.divIcon({ className: "", html: `<div class="night">🌙${d.i + 1}</div>`, iconSize: null });
+    const day = new Date(l.depart).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    L.marker([l.lat, l.lon], { icon, zIndexOffset: 1500 })
+      .bindPopup(`<b>Night ${d.i + 1}: ${esc(l.name)}</b>${noteLink(l.file)}<br>${day} · ~${l.approx_mi} mi, ${hm(l.drive_min)}` +
+        (l.nearby.length ? `<br>Near: ${l.nearby.map((n, k) => esc(n) + noteLink(l.nearby_files[k])).join(", ")}` : "") +
+        (l.nights > 1 ? `<br>${l.nights} nights` : ""))
+      .addTo(layer);
+  });
   if (!map._fitted) {
     map._fitted = true;
     // Fit after layout settles, or Leaflet fits to a stale size.

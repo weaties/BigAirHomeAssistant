@@ -46,6 +46,7 @@ def test_full_note_parses_every_field() -> None:
         best_months=(4, 5, 9, 10),
         destination=True,
         rating=4,
+        file="Example Canyon - Rimtown.md",
     )
 
 

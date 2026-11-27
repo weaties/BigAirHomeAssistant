@@ -230,9 +230,18 @@ a bad one is a warning.
 
 Pick **Get there slow**, type a destination that's several days away and tap
 **Plan trip**. The planner first lays out the driving days in a **Days to …**
-card, then plans day 1 in detail below it (fuel, weather, POIs, today's drive).
-The **To** field keeps the far destination, so tapping **Plan trip** again
-re-plans from wherever you are. The card replaces #92's date-driven sketch.
+card, then plans the **whole trip** below it: fuel stops, weather, POIs and the
+map for the full route (#119). A 🌙 marks each night's stop on the map. Weather,
+POI and fuel-stop times follow the days (leave each morning, sleep each night),
+and each fuel stop and POI says which day it falls on. Changing a layover
+re-times them. The **To** field keeps the far destination, so tapping **Plan
+trip** again re-plans from wherever you are. The card replaces #92's date-driven
+sketch.
+
+Each day has a **Plan this day** button: slow mode from the night before to
+that night's stop, with the day's window and proposed POI stops. A later day's
+fuel stops start from today's tank, so follow the whole trip's fuel plan.
+**Show the whole trip** goes back.
 
 Every day leaves at 10:00 and must stay within **both** limits: at most 300 mi,
 and arriving by 15:00 (or sunset, if that's earlier). On slow roads the time
@@ -254,6 +263,11 @@ The whole trip is chosen at once, comparing in this order:
 So a day stops short or runs long to reach a good spot, and a dull night is
 avoided even if that adds a day. A cool stop is never added only to raise the
 score, and distance never scores. A day ends at the destination whenever it fits.
+
+Wherever a vault POI appears (the POI list, map pins, the days card, Where
+next?), 📝 opens its note in Obsidian. Set `OBSIDIAN_VAULT` (the vault's name as
+Obsidian shows it on the phone) and `OBSIDIAN_POI_FOLDER` (the POI folder's path
+inside the vault) in `deploy/.env`. Without a vault, there are no links.
 
 **Layover days** are set per stop: 0 (the default) means one night, then drive on
 in the morning. Changing one re-plans the days at no extra cost, because the

@@ -6,6 +6,7 @@
 - POST /api/pois         → re-run the POI search on the cached plan's route with
                            a new reach (#88), without re-planning, and update the cache
 - POST /api/destinations → where to spend the next nights, from a start (#91)
+- GET  /api/config       → what the page needs to know: the Obsidian vault for note links (#119)
 - POST /api/chain        → slow mode's days to a far destination, with layovers (#117)
 - GET  /api/claude/status, POST /api/claude/explain, GET /api/claude/proposals,
   POST /api/claude/proposals/<id>/accept|dismiss, POST /api/claude/chat (#93)
@@ -88,7 +89,9 @@ def make_server(
     run_destinations: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     run_chain: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     claude: ClaudeApi | None = None,
+    config: dict[str, Any] | None = None,
 ) -> ThreadingHTTPServer:
+    page_config = config or {"obsidian": None}
     limiter = _Limiter(daily_limit, now_fn)
     poi_limiter = _Limiter(daily_limit * POI_LIMIT_FACTOR, now_fn)
     dest_limiter = _Limiter(daily_limit, now_fn)
@@ -126,6 +129,8 @@ def make_server(
                     self._json(404, {"error": "no briefing yet"})
                 else:
                     self._json(200, last)
+            elif path == "/api/config":
+                self._json(200, page_config)
             elif path == "/health":
                 self._send(200, b"ok", "text/plain")
             elif path == "/api/plan/last":
