@@ -63,6 +63,18 @@ views:
                 color: "#30a46c"
             grid_options:
               columns: full
+          # Tapo L930 strip (#68, Decision #49): right under the gauge so it's on
+          # screen without scrolling. Tap toggles; hold for brightness and colour.
+          - type: tile
+            entity: light.van_bed_lights
+            name: Bed lights
+            icon: mdi:led-strip-variant
+            tap_action:
+              action: toggle
+            hold_action:
+              action: more-info
+            grid_options:
+              columns: full
           - type: tile
             entity: sensor.bigair_van_range
             name: Range
@@ -291,16 +303,6 @@ views:
             color: blue
             grid_options:
               columns: 6
-          # Tapo L930 strip via HA's TP-Link integration (#68, Decision #49).
-          - type: tile
-            entity: light.van_bed_lights
-            name: Bed lights
-            icon: mdi:led-strip-variant
-            features_position: bottom
-            features:
-              - type: light-brightness
-            grid_options:
-              columns: full
           - type: markdown
             text_only: true
             content: >-
