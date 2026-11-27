@@ -597,3 +597,11 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     rsyncs the encrypted repo hourly, and only when the Pi's `status.json` says the last
     run checked OK. `RESTIC_PASSWORD` is in both env files, and it belongs in Dan's
     password manager too. Restore steps: `docs/backup.md`.
+47. **2026-11-26 — Energy is integrated in bigair; loads are derived until the load node
+    lands** (#113). `energy.py` turns the Victron flows into Wh per local day on
+    monotonic time, never across a gap over 120 s (Grafana's `integral()` would
+    bridge an overnight outage). Loads = solar − battery net while the alternator
+    charger is off. While the Orion charges, its record has no current, so loads are
+    held and alternator = net − solar + loads, both flagged as estimates. Daily totals
+    go to `energy` in van_history: one point per local day, stamped at local midnight
+    and rewritten as it grows. Grafana `bigair-energy` shows them.

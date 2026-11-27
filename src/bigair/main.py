@@ -255,6 +255,9 @@ def _run(args: argparse.Namespace) -> int:
         await stop.wait()
         logger.info("stopping: saving fuel state")
         svc.flush(datetime.now(UTC))
+        if meter.today.day:
+            with contextlib.suppress(OSError):
+                write_state(energy_path, meter.to_state(), durable=False)
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

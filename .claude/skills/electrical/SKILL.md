@@ -66,16 +66,31 @@ VERIFIED criteria are in `docs/pid-register.md`.
 - Calibrate each channel against a clamp meter at a known load. Record the
   shunt resistance and calibration factor in the node YAML.
 
-## Accounting (M3)
+## Accounting (#113, `energy.py`)
 
-- **Charging by source:** solar = MPPT battery current × voltage (or `pv_power_w`);
-  alternator = Orion output (its record has no current: estimate it from the BMV's
-  current while the Orion is on, or add a shunt); shore = charger output.
-- **Consumption by load:** Σ INA228 circuits. "Other" = BMV net minus known
-  loads minus charge sources, which shows unmetered loads.
-- **Daily energy budget:** Wh in by source vs Wh out by load per local day,
-  plus SOC history from the BMV. Integrate W to Wh in bigair, not in
-  Grafana.
+- **bigair integrates W → Wh**, never Grafana: Grafana's `integral()` interpolates
+  across gaps, such as an overnight power-off. `EnergyMeter` uses the edge's monotonic
+  time and never integrates across a gap over `MAX_GAP_S` (120 s; the BLE bursts are 30 s
+  apart). Days are local (`TZ` in `deploy/.env`) and only roll forward, because a
+  pre-sync clock can be days behind. Today's totals are saved to
+  `data/bigair/energy_state.json` every minute and on shutdown.
+- **Flows:**
+  - net = BMV `power_w`;
+  - solar = MPPT battery-side V × A;
+  - **loads = solar − net** while the Orion isn't charging (no shore charger is wired;
+    shore power would show up as negative loads).
+  - While the Orion charges, its record has no current, so loads are **held** at their
+    last value and **alternator = net − solar + loads**. Both are flagged `estimated`,
+    and loads Wh while held count in `estimated_wh`.
+  - The INA228 load node will replace the estimate with measured loads.
+- **Outputs:**
+  - `electrical,device=house` (`loads_w`, `alternator_w`, `estimated`) with each BMV point;
+  - `energy` in van_history: one point per local day, stamped at local midnight and
+    rewritten every minute, so it always holds the day's running total;
+  - HA sensors "House loads", "Alternator power", "Loads today", "Battery charged/used
+    today", "Alternator today", "Solar to battery today".
+- **Dashboard:** Grafana `bigair-energy` (phone-friendly, `?kiosk`): now, today, power
+  flows, SOC and voltage, daily bars and a table.
 
 ## Adding a load
 

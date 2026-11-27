@@ -50,6 +50,7 @@ grafana/provisioning/
 | `bigair-fuel` | tank gal, range mi, mpg rolling, fill-up annotations |
 | `bigair-mpg-map` | Geomap of `track`, coloured by `mpg_30s` |
 | `bigair-phone` | Phone-width (#65): tank gauge, range, mpg now, status, last reading; tank, mpg, speed-vs-mpg, track map, battery |
+| `bigair-energy` | House electrical (#113): now (SOC, net, time to go, solar, loads, alternator), today's Wh, power flows, SOC and voltage, daily bars and table from `energy`. Generated layout; InfluxQL `alias: $col` so `AS` names match overrides |
 
 ## Phone dashboard rules (`bigair-phone`)
 
