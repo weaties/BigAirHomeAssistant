@@ -51,8 +51,10 @@ command -v restic >/dev/null || fail "restic not installed (re-run deploy/bootst
 RESTIC_PASSWORD="$(env_get RESTIC_PASSWORD)"
 [[ -n "$RESTIC_PASSWORD" ]] || fail "RESTIC_PASSWORD missing from deploy/.env"
 export RESTIC_PASSWORD RESTIC_REPOSITORY="$BACKUP_DIR/restic"
+export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-/var/cache/bigair-restic}"  # systemd sets no $HOME
 
 mkdir -p "$BACKUP_DIR"
+chown "$OWNER" "$BACKUP_DIR"  # the Mac reads status.json and the repo as this user
 chmod 700 "$BACKUP_DIR"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"/{influx,homeassistant,grafana,bigair,deploy}
