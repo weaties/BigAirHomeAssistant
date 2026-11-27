@@ -236,26 +236,28 @@ re-plans from wherever you are. The card replaces #92's date-driven sketch.
 
 Every day leaves at 10:00 and must stay within **both** limits: at most 300 mi,
 and arriving by 15:00 (or sunset, if that's earlier). On slow roads the time
-limit usually binds first: at 45 mph a day is 225 mi. Where each day ends is
-picked in this order:
+limit usually binds first: at 45 mph a day is 225 mi.
 
-1. **the destination**, if it fits today;
-2. otherwise **the best spot in reach**: a vault destination, iOverlander site or
-   public land within 40 mi of the route and at least 50 mi along. A spot counts
-   only if it's a vault destination or has things to do (your POIs) within
-   25 mi. It scores its own points plus each nearby POI's score (rating, season
-   and tag weights; negatives count as 0). The highest score wins, so a day can
-   stop short or run long to get somewhere good. Ties go to fewer miles, and
-   distance never scores;
-3. otherwise **the farthest Walmart** in reach (a Places search along the route,
-   made only when the trip takes more than a day). Check that the store allows
-   overnight parking;
-4. otherwise an **open spot** as far along as the rules allow. Day 1's open spot
-   gets a **Find a spot near here** button.
+The days stretch or shrink so that every night lands somewhere worth exploring.
+A **spot** is a known place to sleep (a vault destination, an iOverlander site or
+public land) within 40 mi of the route and at least 50 mi along. It's **cool** if
+it's a vault destination or has your POIs within 25 mi. Its score is its own
+plus each nearby POI's (rating, season and tag weights; negatives count as 0).
+The whole trip is chosen at once, comparing in this order:
+
+1. the fewest **open** nights (no known spot; day 1's gets a **Find a spot near
+   here** button);
+2. the fewest nights at a spot with nothing to do nearby;
+3. the fewest driving days;
+4. the highest total score.
+
+So a day stops short or runs long to reach a good spot, and a dull night is
+avoided even if that adds a day. A cool stop is never added only to raise the
+score, and distance never scores. A day ends at the destination whenever it fits.
 
 **Layover days** are set per stop: 0 (the default) means one night, then drive on
 in the morning. Changing one re-plans the days at no extra cost, because the
-route and the Walmart search are cached. The arrival date follows from the
+route is cached. The arrival date follows from the
 layovers. **Arrive by** is optional and only warns.
 
 Miles and times are estimates from the route's pace. A spot's distance off the

@@ -1,34 +1,40 @@
 """Slow mode's multi-day plan to a far destination (#117; replaces #92's sketch).
 
 One slow-mode route to the destination is cut into driving days. Each day leaves at
-the rules' time (10:00) and must stay under the mileage ceiling (300 mi) and arrive
-inside the day's window (in by 15:00, before sunset). Where each day ends is
-**scored**, so a day can stop short or run long to reach somewhere worth
-exploring:
+the rules' time (10:00) and must stay under the mileage ceiling (300 mi) **and**
+arrive inside the day's window (in by 15:00, before sunset). Those are hard limits.
 
-1. **The goal**, if it fits today.
-2. Otherwise the **best spot** in reach: a known place to sleep (a vault
-   destination, an iOverlander site, public land) within ``SNAP_MI`` of the route
-   and at least ``MIN_LEG_MI`` along. A spot counts only if it's worth stopping
-   for: a vault destination, or one with things to do within ``EXPLORE_MI``. Its
-   score is its own (``dest_score``) plus the score of every vault POI near it
-   (``score_poi``, negatives count as 0). Ties go to fewer miles. **Distance never
-   scores**: 300 mi is a ceiling, not a target.
-3. Otherwise the **farthest Walmart** in reach (Dan: "stop at 300 at a Walmart").
-4. Otherwise an **open spot** as far along as the rules allow: find a spot there
-   when the time comes.
+Every night should be somewhere worth exploring, so the days stretch or shrink to
+land on good spots (Dan: "stop short or extend"). A **spot** is a known place to
+sleep (a vault destination, an iOverlander site, public land) within ``SNAP_MI``
+of the route. A spot is **cool** if it's a vault destination or has things to do
+within ``EXPLORE_MI``. Its score is its own (``dest_score``) plus the score of every
+vault POI near it (``score_poi``, negatives count as 0).
+
+The whole trip is chosen at once, comparing in this order:
+
+1. the fewest **open** nights (no known spot: find one when the time comes);
+2. the fewest nights at a spot that isn't cool;
+3. the fewest driving days;
+4. the highest total score of the nights.
+
+So a dull night is avoided even at the cost of an extra day, but a cool stop is
+never added just to pile up score. Distance never scores: 300 mi is a ceiling,
+not a target. A day ends at the goal whenever the goal fits.
 
 Layover days are Dan's per stop: 0 (the default) is one night and drive on in the
 morning. The arrival date comes from the layovers; an arrive-by date only warns.
 
 Miles and minutes are estimates. Along the route they use the route's own pace.
 A spot's distance off the route counts on the way in and again on the way out,
-in straight-line miles at ``OFF_ROUTE_MPH``. "Plan this day" routes the day for
-real, and that check is the one that counts.
+in straight-line miles at ``OFF_ROUTE_MPH``. Each day's window is taken at the
+day's farthest reach. "Plan this day" routes the day for real, and that check is
+the one that counts.
 """
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -61,10 +67,10 @@ class Leg:
     index: int
     depart: datetime
     point: tuple[float, float]
-    """Where the day ends: the spot, the Walmart, the open spot, or the goal."""
+    """Where the day ends: the spot, the open spot, or the goal."""
     to: Destination | None
     kind: str
-    """``goal``, ``spot``, ``walmart`` or ``open``."""
+    """``goal``, ``spot`` or ``open``."""
     approx_mi: float
     drive_min: float
     window_min: float
@@ -76,6 +82,8 @@ class Leg:
     reasons: tuple[str, ...] = ()
     nearby: tuple[str, ...] = ()
     """Vault POIs within ``EXPLORE_MI`` that add to the score."""
+    cool: bool = False
+    """A vault destination, or things to do nearby."""
 
     @property
     def nights(self) -> int:
@@ -100,20 +108,28 @@ class _Placed:
     off: float
 
 
+@dataclass(frozen=True)
+class _State:
+    cost: tuple[int, int, float]
+    """(open nights, dull nights, −score) so far."""
+    legs: tuple[Leg, ...]
+    mile: float
+    off: float
+
+
 def _day(d: date | datetime) -> str:
     return f"{d:%a %b} {d.day}"
 
 
 def _explore(
     c: Destination, pois: list[Poi], month: int, rules: TravelRules
-) -> tuple[float, float, list[str], list[str]]:
-    """(own score, total score, reasons, nearby names) for a spot in ``month``."""
+) -> tuple[float, list[str], list[str], bool]:
+    """(score, reasons, nearby names, cool) for a spot in ``month``."""
 
     def season(p: Poi) -> bool | None:
         return None if p.best_months is None else month in p.best_months
 
-    own, reasons = dest_score(c, season(c.poi) if c.poi else None, None, rules)
-    total = own
+    total, reasons = dest_score(c, season(c.poi) if c.poi else None, None, rules)
     nearby: list[str] = []
     for p in pois:
         if p is c.poi or (p.name == c.name and (p.lat, p.lon) == (c.lat, c.lon)):
@@ -125,14 +141,14 @@ def _explore(
             total += s
             nearby.append(p.name)
             reasons.append(f"near {p.name} (+{s:g})")
-    return own, total, reasons, nearby
+    cool = (c.poi is not None and bool(c.poi.destination)) or bool(nearby)
+    return total, reasons, nearby, cool
 
 
 def plan_days(
     route: RouteInfo,
     depart: datetime,
     candidates: list[Destination],
-    walmarts: list[Destination],
     pois: list[Poi],
     rules: TravelRules,
     layovers: tuple[int, ...] = (),
@@ -141,106 +157,110 @@ def plan_days(
     total = route.total_mi
     pace = route.duration_s / 60 / total if total > 0 else 0.0
     goal = route.points[-1]
+    lay = [max(0, min(MAX_LAYOVER, int(v))) for v in layovers]
 
-    def place(ds: list[Destination]) -> list[_Placed]:
-        out = []
-        for d in ds:
-            mile, off = route.project(d.lat, d.lon)
-            if off <= SNAP_MI:
-                out.append(_Placed(d, mile, off))
-        return out
+    spots = sorted(
+        (
+            _Placed(d, mile, off)
+            for d in candidates
+            for mile, off in [route.project(d.lat, d.lon)]
+            if off <= SNAP_MI
+        ),
+        key=lambda p: p.mile,
+    )
+    miles = [p.mile for p in spots]
+    scored: dict[tuple[int, int], tuple[float, list[str], list[str], bool]] = {}
 
-    spots, stores = place(candidates), place(walmarts)
-    legs: list[Leg] = []
-    warnings: list[str] = []
-    m0, off0, when = 0.0, 0.0, depart
+    def explore(i: int, month: int) -> tuple[float, list[str], list[str], bool]:
+        if (i, month) not in scored:
+            scored[(i, month)] = _explore(spots[i].dest, pois, month, rules)
+        return scored[(i, month)]
 
-    def drive(mile: float, off: float) -> tuple[float, float]:
-        along = mile - m0
-        return along + off0 + off, along * pace + (off0 + off) / OFF_ROUTE_MPH * 60
+    def leave(k: int) -> datetime:
+        return depart + timedelta(days=k + sum(lay[:k]))
 
-    def fits(p: _Placed) -> tuple[bool, float, float, float, str]:
-        mi, mins = drive(p.mile, p.off)
-        b = day_budget(when, rules, (p.dest.lat, p.dest.lon))
-        ok = (
-            p.mile - m0 >= MIN_LEG_MI
-            and mi <= rules.max_day_mi + _EPS
-            and mins <= b.window_min + _EPS
-        )
-        return ok, mi, mins, b.window_min, b.end_reason
+    frontier: dict[tuple[str, float], _State] = {("start", 0.0): _State((0, 0, 0.0), (), 0.0, 0.0)}
+    best: tuple[tuple[int, int, int, float], tuple[Leg, ...]] | None = None
+    empty_window: str | None = None
 
-    for i in range(MAX_DAYS):
-        layover = 0
-        if i < len(layovers):
-            layover = max(0, min(MAX_LAYOVER, int(layovers[i])))
+    for k in range(MAX_DAYS):
+        when = leave(k)
+        layover = lay[k] if k < len(lay) else 0
+        nxt: dict[tuple[str, float], _State] = {}
 
-        gmi, gmin = drive(total, 0.0)
-        gb = day_budget(when, rules, goal)
-        if gmi <= rules.max_day_mi + _EPS and gmin <= gb.window_min + _EPS:
-            legs.append(
-                Leg(i, when, goal, None, "goal", gmi, gmin, gb.window_min, gb.end_reason, 0)
-            )
-            arrive = when + timedelta(minutes=gmin)
-            if by is not None and arrive.date() > by:
-                warnings.append(f"With these layovers you arrive {_day(arrive)}, after {_day(by)}.")
-            return Chain(tuple(legs), arrive, tuple(warnings))
+        def keep(
+            key: tuple[str, float], st: _State, nxt: dict[tuple[str, float], _State] = nxt
+        ) -> None:
+            old = nxt.get(key)
+            if old is None or st.cost < old.cost:
+                nxt[key] = st
 
-        reach_pt = point_at(route, min(total, m0 + rules.max_day_mi))
-        rb = day_budget(when, rules, reach_pt)
-        if rb.window_min <= 0:
-            warnings.append(
-                f"No driving time on {_day(when)}: the window from {when:%H:%M} to "
-                f"{rb.end:%H:%M} is empty."
-            )
-            return Chain((), None, tuple(warnings))
+        for st in frontier.values():
+            m0, off0 = st.mile, st.off
+            along_goal = total - m0
+            gmi = along_goal + off0
+            gmin = along_goal * pace + off0 / OFF_ROUTE_MPH * 60
+            gb = day_budget(when, rules, goal)
+            if gmi <= rules.max_day_mi + _EPS and gmin <= gb.window_min + _EPS:
+                leg = Leg(k, when, goal, None, "goal", gmi, gmin, gb.window_min, gb.end_reason, 0)
+                done = (st.cost[0], st.cost[1], k + 1, st.cost[2])
+                if best is None or done < best[0]:
+                    best = (done, (*st.legs, leg))
+                continue  # the goal fits: go there
 
-        month = when.month
-        best: tuple[tuple[float, float], Leg, _Placed] | None = None
-        for p in spots:
-            ok, mi, mins, window, reason = fits(p)
-            if not ok:
+            rb = day_budget(when, rules, point_at(route, min(total, m0 + rules.max_day_mi)))
+            window = rb.window_min
+            if window <= 0:
+                empty_window = (
+                    f"No driving time on {_day(when)}: the window from {when:%H:%M} to "
+                    f"{rb.end:%H:%M} is empty."
+                )
                 continue
-            own, score, reasons, nearby = _explore(p.dest, pois, month, rules)
-            vault_dest = p.dest.poi is not None and bool(p.dest.poi.destination)
-            if not (vault_dest or nearby):
-                continue
-            leg = Leg(i, when, (p.dest.lat, p.dest.lon), p.dest, "spot", mi, mins, window,
-                      reason, layover, score, tuple(reasons), tuple(nearby))  # fmt: skip
-            key = (round(score, 9), -mi)
-            if best is None or key > best[0]:
-                best = (key, leg, p)
-        chosen: tuple[Leg, float, float] | None = None
-        if best is not None:
-            chosen = (best[1], best[2].mile, best[2].off)
-        else:
-            far: tuple[float, Leg, _Placed] | None = None
-            for p in stores:
-                ok, mi, mins, window, reason = fits(p)
-                if ok and (far is None or p.mile > far[0]):
-                    leg = Leg(i, when, (p.dest.lat, p.dest.lon), p.dest, "walmart", mi, mins,
-                              window, reason, layover)  # fmt: skip
-                    far = (p.mile, leg, p)
-            if far is not None:
-                chosen = (far[1], far[2].mile, far[2].off)
-        if chosen is None:
+
+            lo = bisect_left(miles, m0 + MIN_LEG_MI - _EPS)
+            hi = bisect_right(miles, m0 + rules.max_day_mi)
+            for i in range(lo, hi):
+                p = spots[i]
+                mi = p.mile - m0 + off0 + p.off
+                mins = (p.mile - m0) * pace + (off0 + p.off) / OFF_ROUTE_MPH * 60
+                if mi > rules.max_day_mi + _EPS or mins > window + _EPS:
+                    continue
+                score, reasons, nearby, cool = explore(i, when.month)
+                leg = Leg(
+                    k, when, (p.dest.lat, p.dest.lon), p.dest, "spot", mi, mins, window,
+                    rb.end_reason, layover, score, tuple(reasons), tuple(nearby), cool,
+                )  # fmt: skip
+                cost = (st.cost[0], st.cost[1] + (0 if cool else 1), st.cost[2] - score)
+                keep(("spot", float(i)), _State(cost, (*st.legs, leg), p.mile, p.off))
+
             along = min(
                 rules.max_day_mi - off0,
-                (rb.window_min - off0 / OFF_ROUTE_MPH * 60) / pace if pace > 0 else total,
+                (window - off0 / OFF_ROUTE_MPH * 60) / pace if pace > 0 else total,
                 total - m0,
             )
-            if along <= 0:
-                warnings.append(
-                    f"Day {i + 1} can't move: the drive back to the route uses the whole day."
-                )
-                return Chain(tuple(legs), None, tuple(warnings))
-            mi, mins = drive(m0 + along, 0.0)
-            pt = point_at(route, m0 + along)
-            leg = Leg(i, when, pt, None, "open", mi, mins, rb.window_min, rb.end_reason, layover)
-            chosen = (leg, m0 + along, 0.0)
+            if along > 0:
+                m1 = m0 + along
+                mi, mins = along + off0, along * pace + off0 / OFF_ROUTE_MPH * 60
+                leg = Leg(k, when, point_at(route, m1), None, "open", mi, mins, window,
+                          rb.end_reason, layover)  # fmt: skip
+                cost = (st.cost[0] + 1, st.cost[1], st.cost[2])
+                keep(("open", round(m1, 3)), _State(cost, (*st.legs, leg), m1, 0.0))
 
-        leg, m0, off0 = chosen
-        legs.append(leg)
-        when = when + timedelta(days=leg.nights)
+        frontier = nxt
+        # Later days only add days; they can still remove dull or open nights.
+        if best is not None:
+            frontier = {key: st for key, st in frontier.items() if st.cost[:2] < best[0][:2]}
+        if not frontier:
+            break
 
-    warnings.append(f"More than {MAX_DAYS} driving days: check the destination.")
-    return Chain(tuple(legs), None, tuple(warnings))
+    warnings: list[str] = []
+    if best is None:
+        if empty_window is not None:
+            return Chain((), None, (empty_window,))
+        return Chain((), None, (f"More than {MAX_DAYS} driving days: check the destination.",))
+    legs = best[1]
+    last = legs[-1]
+    arrive = last.depart + timedelta(minutes=last.drive_min)
+    if by is not None and arrive.date() > by:
+        warnings.append(f"With these layovers you arrive {_day(arrive)}, after {_day(by)}.")
+    return Chain(legs, arrive, tuple(warnings))

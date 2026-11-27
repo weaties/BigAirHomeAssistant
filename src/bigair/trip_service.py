@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 from bigair.byways import choose_route
 from bigair.chain import Chain, Leg, plan_days
 from bigair.day_plan import Candidate, DayBudget, Proposal, day_budget, propose, score_poi
-from bigair.dest_sources import WALMART_QUERY, decode_walmarts
 from bigair.destinations import (
     DEDUPE_MI,
     Destination,
@@ -52,7 +51,6 @@ from bigair.fuel_sources import (
     drift_per_day,
     encode_polyline,
     mirror_return,
-    segments,
 )
 from bigair.poi_near import LookupCache, PoiHit, Reach, near_route, reach_from_json
 from bigair.route_weather import (
@@ -142,10 +140,8 @@ class TripEdges:
     byways: Callable[[], ByWayIndex | None] | None = None
     """Scenic byway lines for slow mode's route choice (#100)."""
     """Google Places campgrounds in a (south, west, north, east) box: the fallback."""
-    chain_cache: dict[tuple[str, str, bool], tuple[RouteInfo, list[Destination]]] = field(
-        default_factory=dict
-    )
-    """Routes and Walmart searches for slow mode's days, reused on layover changes (#117)."""
+    chain_cache: dict[tuple[str, str, bool], RouteInfo] = field(default_factory=dict)
+    """Routes for slow mode's days, reused on layover changes (#117)."""
 
 
 @dataclass(frozen=True)
@@ -768,30 +764,13 @@ class ChainResult:
     rules: TravelRules = field(default_factory=TravelRules)
 
 
-def _walmarts(route: RouteInfo, edges: TripEdges, warnings: list[str]) -> list[Destination]:
-    try:
-        found = [
-            w
-            for seg in segments(route)
-            for w in decode_walmarts(edges.search(seg, None, WALMART_QUERY, None))
-        ]
-    except (OSError, ValueError, KeyError, RuntimeError) as e:
-        warnings.append(f"Walmart search failed ({e}); days without a spot end at an open spot.")
-        return []
-    kept: list[Destination] = []
-    for w in found:
-        if all(crow_mi((w.lat, w.lon), (k.lat, k.lon)) > DEDUPE_MI for k in kept):
-            kept.append(w)
-    return kept
-
-
 def chain_plan(
     req: ChainRequest, edges: TripEdges, rules: TravelRules | None = None
 ) -> ChainResult:
     """The driving days and stops to ``goal``, with Dan's layovers.
 
-    The route and the Walmart search are cached by (origin, goal), so changing a
-    layover re-plans without paying for them again.
+    The route is cached by (origin, goal), so changing a layover re-plans without
+    paying for it again.
     """
     rules = rules or TravelRules()
     now = edges.now()
@@ -799,29 +778,22 @@ def chain_plan(
     origin_str, _ = _resolve_origin(req.origin, edges)
     depart = req.depart or _slow_depart(now, rules, req.utc_offset_min)
     key = (origin_str, req.goal.strip().lower(), rules.avoid_interstates)
-    cached = edges.chain_cache.get(key)
-    if cached is None:
+    route = edges.chain_cache.get(key)
+    if route is None:
         try:
             body = edges.route(origin_str, req.goal, [], rules.avoid_interstates, False)
             route = decode_route(body)
         except ValueError as e:
             raise TripError(f"no route from {req.origin} to {req.goal}") from e
-        # A trip that fits in one day needs no overnight fallback: skip the search.
-        window = day_budget(depart, rules, route.points[-1]).window_min
-        one_day = route.total_mi <= rules.max_day_mi and route.duration_s / 60 <= window
-        walmarts = [] if one_day else _walmarts(route, edges, warnings)
-        if not warnings:  # a failed search isn't cached; the next re-plan retries it
-            while len(edges.chain_cache) >= CHAIN_CACHE_SIZE:
-                edges.chain_cache.pop(next(iter(edges.chain_cache)))
-            edges.chain_cache[key] = (route, walmarts)
-    else:
-        route, walmarts = cached
+        while len(edges.chain_cache) >= CHAIN_CACHE_SIZE:
+            edges.chain_cache.pop(next(iter(edges.chain_cache)))
+        edges.chain_cache[key] = route
     pois = _load(edges.pois, warnings)
     vault = [
         Destination(p.name, p.lat, p.lon, "poi", None, p.summary, p) for p in pois if p.destination
     ]
     cands = [*vault, *_load(edges.ioverlander, warnings), *_load(edges.public_land, warnings)]
-    c = plan_days(route, depart, cands, walmarts, pois, rules, req.layovers, req.by)
+    c = plan_days(route, depart, cands, pois, rules, req.layovers, req.by)
     return ChainResult(req, now, depart, route.total_mi, c, tuple(warnings) + c.warnings, rules)
 
 
@@ -864,6 +836,7 @@ def chain_to_json(r: ChainResult) -> dict[str, Any]:
                 "score": round(leg.score, 2),
                 "reasons": list(leg.reasons),
                 "nearby": list(leg.nearby),
+                "cool": leg.cool,
             }
             for leg in r.chain.legs
         ],

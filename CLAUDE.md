@@ -627,15 +627,15 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     a short list of ids checked against the Pi's entity registry. Tapo firmware 1.4.x
     also needed the Tapo app's Third-Party Compatibility switch on before HA could
     connect.
-50. **2026-11-27 — Slow mode plans a far destination day by day, with scored stops**
-    (Dan's request, #117; replaces #92's date-driven chain). **Get there slow** to a
-    destination more than a day away lays out the driving days, then plans day 1
-    in detail. Each day must stay under the mileage ceiling **and** arrive inside the
-    window (15:00 or sunset). It ends at the highest-scoring spot in reach, where a
-    spot scores its own points plus those of vault POIs within 25 mi. With no spot
-    worth stopping for, it ends at the farthest Walmart in reach, and failing that at
-    an open spot as far as the rules allow. Dan: "stop short or push long to get
-    somewhere cool … stop at 300 at a Walmart." This amends #40's "300 mi is a
-    ceiling, never a target": distance still never adds to a score, but the fallback
-    day does run to the limit. Layover days are Dan's per stop (default 0, one
-    night). The arrival date follows from them; an arrive-by date only warns.
+50. **2026-11-27 — Slow mode plans a far destination day by day, so each night is
+    somewhere cool** (Dan's request, #117; replaces #92's date-driven chain).
+    **Get there slow** to a destination more than a day away lays out the driving
+    days, then plans day 1 in detail. Each day must stay under the mileage ceiling
+    **and** arrive inside the window (15:00 or sunset). A spot is cool if it's a
+    vault destination or has vault POIs within 25 mi, and it scores its own points
+    plus theirs. The whole trip is chosen at once: fewest open nights, then fewest
+    dull nights, then fewest days, then highest score. Dan: "stop short or extend"
+    to land on good spots. A Walmart-lot fallback was built and dropped the same day
+    (Dan: "Not a Walmart"). Distance never scores (#40). Layover days are Dan's per
+    stop (default 0, one night). The arrival date follows from them; an arrive-by
+    date only warns.

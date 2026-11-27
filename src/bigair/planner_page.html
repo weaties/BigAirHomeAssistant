@@ -137,7 +137,7 @@
     </div>
     <div class="status" id="tripstatus"></div>
     <div class="scroll"><table id="trip"></table></div>
-    <div class="note">Each day ends at the best spot you can reach by the arrive-by time without passing the daily ceiling: a spot scores for the things to do near it. With nothing worth stopping for, the day runs as far as the rules allow, to a Walmart (check the store allows overnight parking) or an open spot. Miles and times are estimates; day 1 is planned for real below. Re-plan from wherever you are.</div>
+    <div class="note">The days stretch or shrink so each night lands somewhere worth exploring: a spot with your POIs within 25 mi, or one of your destinations. A dull night is avoided even if it adds a day; then fewer days, then the richer stops. No day passes the daily ceiling or the arrive-by time. Miles and times are estimates; day 1 is planned for real below. Re-plan from wherever you are.</div>
   </div>
 
   <div class="card" id="destcard">
@@ -502,7 +502,7 @@ function renderDay() {
 }
 
 // ---------- destination discovery (#91) ----------
-const SOURCE_LABEL = { poi: "your POI", ioverlander: "iOverlander", public_land: "public land", campground: "campground", walmart: "Walmart" };
+const SOURCE_LABEL = { poi: "your POI", ioverlander: "iOverlander", public_land: "public land", campground: "campground" };
 let dests = null;
 async function findDests() {
   saveForm();
@@ -684,7 +684,7 @@ async function changeLayover(i, v) {
     $("tripstatus").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
   }
 }
-const KIND_TAG = { goal: "destination", walmart: "Walmart: overnight fallback", open: "open: find a spot nearby" };
+const KIND_TAG = { goal: "destination", open: "open: find a spot nearby" };
 function renderTrip() {
   $("tripcard").classList.toggle("hidden", !trip);
   if (!trip) return;
@@ -697,7 +697,8 @@ function renderTrip() {
     (j.legs.length ? `<span class="note">${j.route_mi} mi in ${j.legs.length} driving days${arrive}. At most ${j.max_day_mi} mi a day, a ceiling and not a target.</span>` : "");
   $("trip").innerHTML = j.legs.length ? `<tr><th>Day</th><th>To</th><th class="num">Drive</th><th class="num">Layover days</th><th></th></tr>` + j.legs.map((l, i) => {
     const tag = l.kind === "spot" ? (SOURCE_LABEL[l.source] || esc(l.source)) : KIND_TAG[l.kind];
-    const near = l.nearby.length ? `<div class="note">Near: ${l.nearby.map(esc).join(", ")}</div>` : "";
+    const near = l.nearby.length ? `<div class="note">Near: ${l.nearby.map(esc).join(", ")}</div>`
+      : l.kind === "spot" && !l.cool ? '<div class="note">Nothing to do nearby that we know of</div>' : "";
     const why = l.reasons.length ? ` title="${esc(l.reasons.join("; "))}"` : "";
     const score = l.kind === "spot" ? ` <span class="tag"${why}>score ${l.score}</span>` : "";
     const lay = l.is_goal ? "" : `<input type="number" min="0" max="30" step="1" value="${l.layover}" data-i="${i}" style="width:64px" aria-label="Layover days at ${esc(l.name)}">`;
