@@ -229,7 +229,19 @@ def test_request_from_json_validates() -> None:
 # --- POIs near the route (#88) ---------------------------------------------------
 
 # The fake route runs due north along lon -120 from lat 40.0 to 42.0.
-NEAR = Poi("Near Springs", 41.0, -120.2, ("hot-springs",), "Warm.", 120, "Soak", (11, 12), True, 5)
+NEAR = Poi(
+    "Near Springs",
+    41.0,
+    -120.2,
+    ("hot-springs",),
+    "Warm.",
+    120,
+    "Soak",
+    (11, 12),
+    True,
+    5,
+    "Near Springs.md",
+)
 FAR = Poi("Far Peak", 41.0, -124.0, ("geology",), None)
 
 
@@ -260,6 +272,7 @@ def test_plan_lists_pois_in_reach_with_detour_and_visit() -> None:
     assert hit["visit_what"] == "Soak"
     assert hit["status"] == "ok"
     assert hit["in_season"] is True  # November
+    assert hit["file"] == "Near Springs.md"
     assert hit["rating"] == 5
     assert hit["destination"] is True
     assert hit["lat"] == 41.0

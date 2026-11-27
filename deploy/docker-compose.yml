@@ -157,6 +157,8 @@ services:
       TZ: ${TZ}  # the evening briefing runs on local time (#94)
       BRIEFING_TIME: ${BRIEFING_TIME:-19:00}
       PLANNER_URL: ${PLANNER_URL:-http://bigair-ha.local:8092/}
+      OBSIDIAN_VAULT: ${OBSIDIAN_VAULT:-}  # POI note links on the page (#119)
+      OBSIDIAN_POI_FOLDER: ${OBSIDIAN_POI_FOLDER:-}
     volumes:
       - ../data/bigair:/data  # cached last plan; gitignored
       # Vault POI notes (#88), synced by Syncthing on the host; read-only here.

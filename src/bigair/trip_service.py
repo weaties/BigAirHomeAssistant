@@ -509,6 +509,7 @@ def _pois_json(
                 "lon": h.poi.lon,
                 "tags": list(h.poi.tags),
                 "summary": h.poi.summary,
+                "file": h.poi.file,
                 "mile": round(h.mile, 1),
                 "eta": _iso(h.eta),
                 "off_route_mi": round(h.off_route_mi, 1),
@@ -691,6 +692,7 @@ def discover_to_json(r: DiscoverResult) -> dict[str, Any]:
                 "source": o.dest.source,
                 "kind": o.dest.kind,
                 "note": o.dest.note,
+                "file": o.dest.poi.file if o.dest.poi else None,
                 "lat": round(o.dest.lat, 5),
                 "lon": round(o.dest.lon, 5),
                 "road_mi": round(o.road_mi),
@@ -836,6 +838,8 @@ def chain_to_json(r: ChainResult) -> dict[str, Any]:
                 "score": round(leg.score, 2),
                 "reasons": list(leg.reasons),
                 "nearby": list(leg.nearby),
+                "nearby_files": list(leg.nearby_files),
+                "file": leg.to.poi.file if leg.to is not None and leg.to.poi else None,
                 "cool": leg.cool,
             }
             for leg in r.chain.legs

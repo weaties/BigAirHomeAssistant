@@ -59,7 +59,9 @@ def _edges(**over: object) -> TripEdges:
     return TripEdges(**base)  # type: ignore[arg-type]
 
 
-SPRINGS = Poi("Springs", 41.0, -111.0, ("hot-springs",), "Soak.", 90, None, (5,), True, 5)
+SPRINGS = Poi(
+    "Springs", 41.0, -111.0, ("hot-springs",), "Soak.", 90, None, (5,), True, 5, "Springs.md"
+)
 ROADSIDE = Poi("Roadside Arch", 40.5, -111.05, (), None, 30, None, None, None, 4)
 PULLOUT = Destination("Mesa Pullout", 41.5, -111.0, "ioverlander", "Wild Camping", None)
 BLM = Destination("Far BLM", 42.5, -111.0, "public_land", "BLM", None)
@@ -146,6 +148,7 @@ def test_discover_json_and_request_parsing() -> None:
     assert o["source"] == "poi"
     assert o["fits"] is True
     assert o["lat"] == 41.0
+    assert o["file"] == "Springs.md"
     req = discover_request_from_json({"origin": "here", "utc_offset_min": -420})
     assert (req.origin, req.utc_offset_min) == ("here", -420)
     with pytest.raises(TripError):
@@ -166,7 +169,7 @@ def test_discover_reads_a_utc_departure_in_the_phones_time_zone() -> None:
 
 
 CANYON = Destination("Canyon Camp", 42.0, -111.0, "ioverlander", "Wild Camping", None)
-HOODOOS = Poi("Hoodoos", 42.05, -111.05, (), None, rating=4)
+HOODOOS = Poi("Hoodoos", 42.05, -111.05, (), None, rating=4, file="Hoodoos.md")
 
 
 def test_chain_plan_lands_each_night_somewhere_cool_and_caches_the_route() -> None:
@@ -199,6 +202,8 @@ def test_chain_plan_lands_each_night_somewhere_cool_and_caches_the_route() -> No
     json.dumps(j)
     assert [leg["nights"] for leg in j["legs"]] == [2, 0]
     assert j["legs"][0]["cool"] is True and j["legs"][0]["source"] == "ioverlander"
+    assert j["legs"][0]["file"] is None  # not a vault note
+    assert j["legs"][0]["nearby_files"] == ["Hoodoos.md"]
     assert j["max_day_mi"] == 300 and j["arrive_by"] == "15:00"
     assert j["arrive"].startswith("2027-05-12")
 

@@ -51,6 +51,8 @@ class Poi:
     best_months: tuple[int, ...] | None = None
     destination: bool | None = None
     rating: int | None = None
+    file: str | None = None
+    """The note's filename in the POI folder, for an Obsidian link (#119)."""
 
 
 def _int_in(v: object, lo: int, hi: int) -> int | None:
@@ -114,6 +116,7 @@ def parse_poi(text: str, filename: str) -> Poi | None:
         best_months=_months(front.get("best_months")),
         destination=dest if isinstance(dest, bool) else None,
         rating=_int_in(front.get("rating"), 1, 5),
+        file=filename,
     )
 
 

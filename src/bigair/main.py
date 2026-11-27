@@ -521,6 +521,18 @@ def _briefing_loop(svc: ClaudeService, at: tuple[int, int], url: str) -> None:
         time.sleep(60)
 
 
+def _planner_config() -> dict[str, Any]:
+    """What the page needs: the Obsidian vault and POI folder for note links (#119).
+
+    ``OBSIDIAN_VAULT`` is the vault's name as Obsidian shows it on the phone, and
+    ``OBSIDIAN_POI_FOLDER`` is the POI folder's path inside that vault. Without a
+    vault, the page shows no links.
+    """
+    vault = os.environ.get("OBSIDIAN_VAULT", "").strip()
+    folder = os.environ.get("OBSIDIAN_POI_FOLDER", "").strip().strip("/")
+    return {"obsidian": {"vault": vault, "folder": folder} if vault else None}
+
+
 def _planner(args: argparse.Namespace) -> int:
     from loguru import logger
 
@@ -605,6 +617,7 @@ def _planner(args: argparse.Namespace) -> int:
         run_destinations=run_destinations,
         run_chain=run_chain,
         claude=claude,
+        config=_planner_config(),
     )
     logger.info("trip planner on {}:{}", args.host, args.port)
     with contextlib.suppress(KeyboardInterrupt):

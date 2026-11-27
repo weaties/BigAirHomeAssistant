@@ -82,6 +82,8 @@ class Leg:
     reasons: tuple[str, ...] = ()
     nearby: tuple[str, ...] = ()
     """Vault POIs within ``EXPLORE_MI`` that add to the score."""
+    nearby_files: tuple[str | None, ...] = ()
+    """Their note files, in the same order (#119)."""
     cool: bool = False
     """A vault destination, or things to do nearby."""
 
@@ -123,14 +125,14 @@ def _day(d: date | datetime) -> str:
 
 def _explore(
     c: Destination, pois: list[Poi], month: int, rules: TravelRules
-) -> tuple[float, list[str], list[str], bool]:
-    """(score, reasons, nearby names, cool) for a spot in ``month``."""
+) -> tuple[float, list[str], list[Poi], bool]:
+    """(score, reasons, nearby POIs, cool) for a spot in ``month``."""
 
     def season(p: Poi) -> bool | None:
         return None if p.best_months is None else month in p.best_months
 
     total, reasons = dest_score(c, season(c.poi) if c.poi else None, None, rules)
-    nearby: list[str] = []
+    nearby: list[Poi] = []
     for p in pois:
         if p is c.poi or (p.name == c.name and (p.lat, p.lon) == (c.lat, c.lon)):
             continue
@@ -139,7 +141,7 @@ def _explore(
         s, _ = score_poi(p, season(p), None, rules)
         if s > 0:
             total += s
-            nearby.append(p.name)
+            nearby.append(p)
             reasons.append(f"near {p.name} (+{s:g})")
     cool = (c.poi is not None and bool(c.poi.destination)) or bool(nearby)
     return total, reasons, nearby, cool
@@ -169,9 +171,9 @@ def plan_days(
         key=lambda p: p.mile,
     )
     miles = [p.mile for p in spots]
-    scored: dict[tuple[int, int], tuple[float, list[str], list[str], bool]] = {}
+    scored: dict[tuple[int, int], tuple[float, list[str], list[Poi], bool]] = {}
 
-    def explore(i: int, month: int) -> tuple[float, list[str], list[str], bool]:
+    def explore(i: int, month: int) -> tuple[float, list[str], list[Poi], bool]:
         if (i, month) not in scored:
             scored[(i, month)] = _explore(spots[i].dest, pois, month, rules)
         return scored[(i, month)]
@@ -228,7 +230,8 @@ def plan_days(
                 score, reasons, nearby, cool = explore(i, when.month)
                 leg = Leg(
                     k, when, (p.dest.lat, p.dest.lon), p.dest, "spot", mi, mins, window,
-                    rb.end_reason, layover, score, tuple(reasons), tuple(nearby), cool,
+                    rb.end_reason, layover, score, tuple(reasons),
+                    tuple(n.name for n in nearby), tuple(n.file for n in nearby), cool,
                 )  # fmt: skip
                 cost = (st.cost[0], st.cost[1] + (0 if cool else 1), st.cost[2] - score)
                 keep(("spot", float(i)), _State(cost, (*st.legs, leg), p.mile, p.off))
