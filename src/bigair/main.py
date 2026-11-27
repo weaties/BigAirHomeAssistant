@@ -69,12 +69,15 @@ def _display(args: argparse.Namespace) -> int:
 def _run(args: argparse.Namespace) -> int:
     import asyncio
     import signal
+    import time
     from datetime import UTC, datetime
 
     from loguru import logger
 
     from bigair.clock import kernel_clock_synced
+    from bigair.electrical import ElectricalTracker, victron_keys
     from bigair.gpsd_io import gpsd_fixes
+    from bigair.ha_discovery import ELECTRICAL_STATE_TOPIC
     from bigair.influx_io import InfluxWriter
     from bigair.mqtt_io import run_mqtt
     from bigair.service import FuelService, ServiceConfig
@@ -112,6 +115,43 @@ def _run(args: argparse.Namespace) -> int:
             if writer is not None:
                 for point in svc.influx_points(sample.ts):
                     writer.add(point)
+
+    # House electrical (#109): Victron Instant Readout over BLE, keys in deploy/.env.
+    electrical = ElectricalTracker()
+    vkeys, vproblems = victron_keys(dict(env))
+    for problem in vproblems:
+        logger.warning("Victron config: {}", problem)
+
+    async def victron() -> None:
+        from bigair.victron_ble import (
+            NotInstantReadout,
+            VictronDecodeError,
+            VictronKeyMismatch,
+            decode,
+        )
+        from bigair.victron_io import victron_adverts
+
+        warned: set[tuple[str, str]] = set()
+        scan_s = float(env.get("VICTRON_SCAN_S", "5"))  # bursts: the GPS shares the radio
+        pause_s = float(env.get("VICTRON_PAUSE_S", "25"))
+        async for mac, data, ts, mono in victron_adverts(vkeys, scan_s, pause_s):
+            try:
+                sample = decode(data, vkeys[mac], ts, mono)
+            except NotInstantReadout:
+                continue  # Victron devices also send other advertisement types
+            except VictronKeyMismatch as e:
+                if (mac, "key") not in warned:  # once per device: the key changes with the PIN
+                    warned.add((mac, "key"))
+                    logger.warning("Victron {}: {} (re-copy the key from VictronConnect)", mac, e)
+                continue
+            except VictronDecodeError as e:
+                if (mac, str(e)) not in warned:
+                    warned.add((mac, str(e)))
+                    logger.warning("Victron {}: {}", mac, e)
+                continue
+            point = electrical.update(sample)
+            if point is not None and writer is not None:
+                writer.add(point)
 
     gauge_path = env.get("BIGAIR_GAUGE_FILE")
 
@@ -159,6 +199,7 @@ def _run(args: argparse.Namespace) -> int:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
         tasks = [
+            *([asyncio.create_task(victron())] if vkeys else []),
             asyncio.create_task(ingest()),
             asyncio.create_task(gps()),
             asyncio.create_task(influx_flusher()),
@@ -170,7 +211,10 @@ def _run(args: argparse.Namespace) -> int:
                     state_payload=lambda: svc.state_payload(datetime.now(UTC)),
                     on_command=lambda t, p: svc.handle_command(t, p, datetime.now(UTC)),
                     drain_outbox=svc.drain_outbox,
-                    extra_states=lambda: [svc.van_state(datetime.now(UTC))],
+                    extra_states=lambda: [
+                        svc.van_state(datetime.now(UTC)),
+                        (ELECTRICAL_STATE_TOPIC, electrical.state_payload(time.monotonic())),
+                    ],
                 )
             ),
         ]

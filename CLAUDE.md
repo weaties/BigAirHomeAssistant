@@ -49,13 +49,13 @@ it is referenced, so the rule stands without the skill.
 ## Architecture
 
 ```
- OBD-II port          Bluetooth          Bluetooth / VE.Direct       ESP32 nodes (ESPHome, future)
+ OBD-II port          Bluetooth          Bluetooth (BLE)             ESP32 nodes (ESPHome, future)
  ┌──────────┐        ┌──────────┐       ┌──────────────────┐        ┌───────────────────────┐
- │ WiCAN    │        │ XGPS160  │       │ Victron BMV-700, │        │ W-Bus heater (Webasto)│
- │ (OBD/PRO)│        │ → gpsd*  │       │ MPPT, DC-DC,     │        │ INA228 load sensors   │
- └────┬─────┘        └────┬─────┘       │ shore charger    │        └──────────┬────────────┘
+ │ WiCAN    │        │ XGPS160  │       │ Victron BMV-712, │        │ W-Bus heater (Webasto)│
+ │ (OBD/PRO)│        │ → gpsd*  │       │ SmartSolar MPPT, │        │ INA228 load sensors   │
+ └────┬─────┘        └────┬─────┘       │ Orion DC-DC      │        └──────────┬────────────┘
       │ MQTT              │ TCP 2947    └───┬──────────────┘                   │ MQTT
-      ▼                   ▼                 │ VE.Direct / HA BLE               ▼
+      ▼                   ▼                 │ Instant Readout → bigair         ▼
  ┌──────────────────────────────────────────┴──────────────────────────────────────────────────┐
  │ Raspberry Pi (Pi OS, Docker Compose, van Wi-Fi, no internet required)                       │
  │                                                                                             │
@@ -79,13 +79,13 @@ Principles:
 
 - **MQTT is the backbone.** Every source publishes to Mosquitto; every
   consumer subscribes. ESPHome telemetry nodes publish to MQTT directly
-  (Decision #23). Only devices HA alone can talk to (Victron BLE) are pushed
-  to MQTT with `mqtt_statestream`. The dash display fetches a frame from
+  (Decision #23). bigair decodes the Victron devices' BLE broadcasts itself
+  (Decision #45). The dash display fetches a frame from
   bigair's display server (Decision #29).
 - **bigair is the single InfluxDB writer.** HA's InfluxDB integration is not
   used — its entity-shaped schema would fight ours. One writer, one schema.
 - **Hardware isolation.** Only edge modules (`mqtt_io.py`, `influx_io.py`,
-  `gps_logger.py`'s gpsd client, `google_io.py`, `eia_io.py`, `weather_io.py`,
+  `gps_logger.py`'s gpsd client, `google_io.py`, `eia_io.py`, `weather_io.py`, `victron_io.py`,
   `planner_server.py`) touch the network or devices, and only
   `main.py` imports them. Logic modules (`fuel_model.py`, `fill_detect.py`,
   `heater.py`) take and return frozen dataclasses from `signals.py`, so they
@@ -147,6 +147,9 @@ src/bigair/          # all Python; one small module per concern
   claude_agent.py    #   Claude tool loop, spend ledger, proposals (#89)
   claude_tools.py / claude_service.py / claude_io.py  # planner tools + state; SDK edge
   telemetry.py / influxql_io.py  # ask the van: read-only InfluxQL checks; briefing schedule (#94)
+  victron_ble.py     #   Victron Instant Readout decoder: AES-CTR + bit layouts (#109)
+  victron_io.py      #   edge: BLE advertisements via bleak / BlueZ D-Bus (#109)
+  electrical.py      #   latest Victron reading per device → MQTT state, Influx points (#109)
   mqtt_io.py / influx_io.py   # edges (M1)
   main.py            #   wiring only
 tests/               # pytest, runs anywhere, no hardware
@@ -200,7 +203,7 @@ tag with trip IDs, prices, coordinates or free text.
 | `driver` | raw | `source` (wican, can) | `throttle_pct`, `cruise_active`, `cruise_set_mph`, `brake_active` |
 | `fuel` | raw | `method` (fuel_rate, maf_faer, maf_fixed) | `tank_gal`, `engine_used_gal`, `heater_used_gal`, `range_mi`, `mpg_rolling`, `mpg_instant_30s`, `fuel_rate_gph`, `stale`, `calibrating` |
 | `heater` | raw | `method` (wbus_pulses, runtime_datasheet, current) | `running`, `power_level`, `pump_hz`, `fuel_gph`, `used_gal` |
-| `electrical` | raw | `device` (bmv700, mppt, dcdc, shore) | `voltage_v`, `current_a`, `power_w`, `soc_pct` |
+| `electrical` | raw | `device` (bmv, mppt, dcdc) | `voltage_v`, `current_a`, `power_w`, `soc_pct`, `consumed_ah`, `time_to_go_s`, `alarm`, `aux_voltage_v`, `midpoint_voltage_v`, `temperature_c` (bmv); `pv_power_w`, `yield_today_wh`, `load_current_a` (mppt); `input_voltage_v`, `off_reason` (dcdc); `state`, `charger_error` (mppt, dcdc) |
 | `load` | raw | `circuit` (fan, webasto, lights, internet, inverter, pi) | `current_a`, `voltage_v`, `power_w` |
 | `track` | history | `source` (gps_bt) | `lat`, `lon`, `alt_m`, `speed_mph`, `heading_deg`, `mpg_30s`, `grade_pct`, `hdop`, `trip_id` |
 | `fill_up` | history | `source` (live, manual, historical), `fill_type` (full, partial), `status` (confirmed, pending, skipped) | `gallons`, `price_per_gal`, `total_cost`, `odometer_mi`, `lat`, `lon`, `tank_before_gal`, `tank_after_gal`, `mpg_since_full`, `fill_id` |
@@ -570,3 +573,14 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     `fake-hwclock`, so a cold boot starts near the last shutdown. An RTC battery
     would close the rest. Amends Decision #24: Influx writes already waited for sync,
     but the fuel model didn't need to wait, it needed a clock that never steps.
+45. **2026-11-26 — bigair decodes the Victron devices' BLE broadcasts** (#109;
+    supersedes the Victron parts of Decisions #4 and #23 and of M3's plan). The
+    battery monitor is a **BMV-712 Smart** with built-in Bluetooth, not the BMV-700 over
+    VE.Direct that was assumed. With the SmartSolar MPPT 100/30 and the Orion-Tr Smart
+    12/12-30, it sends Victron's encrypted Instant Readout. `victron_io.py` (bleak, the
+    host's BlueZ over the read-only `/run/dbus` mount) passes the broadcasts to
+    `victron_ble.py`, which decodes them to Victron's published layout. HA's Bluetooth stays
+    off, so the XGPS160 keeps the radio's attention and there's no `mqtt_statestream`.
+    Readings go to `bigair/electrical/state` for HA, and to `electrical` in Influx every
+    10 s per device. A device silent for 2 min reads as unknown. Keys live only in
+    `deploy/.env` (`VICTRON_<NAME>_MAC`/`_KEY`).

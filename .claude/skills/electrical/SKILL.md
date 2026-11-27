@@ -1,39 +1,50 @@
 ---
 name: electrical
-description: House electrical telemetry — Victron integration (BMV-700 and MPPT over VE.Direct, DC-DC and shore chargers over Victron BLE instant readout), per-circuit INA228 current sensing on an ESP32, charging-by-source vs consumption-by-load accounting, and how to add a load. TRIGGER when working on electrical/load measurements, esphome/loads*.yaml, VE.Direct or Victron BLE ingestion, or energy-budget dashboards. DO NOT trigger for the starter battery voltage from OBD (that's /pid-discovery) or heater fuel (use /heater-accounting).
+description: House electrical telemetry — Victron integration (BMV-712 Smart, SmartSolar MPPT and Orion DC-DC decoded by bigair from BLE Instant Readout), per-circuit INA228 current sensing on an ESP32, charging-by-source vs consumption-by-load accounting, and how to add a load. TRIGGER when working on electrical/load measurements, esphome/loads*.yaml, VE.Direct or Victron BLE ingestion, or energy-budget dashboards. DO NOT trigger for the starter battery voltage from OBD (that's /pid-discovery) or heater fuel (use /heater-accounting).
 ---
 
 # Electrical
 
-## Device inventory (confirm before designing)
+## Device inventory (confirmed 2026-11-26, #109)
 
-Every row is **UNVERIFIED** until Dan confirms the model and ports
-(`docs/pid-register.md` → Devices):
+| Device | Interface | Record | Status |
+|---|---|---|---|
+| **BMV-712 Smart** battery monitor (model id 0xA383) | BLE Instant Readout, built in | 0x02 battery monitor | RESPONDS |
+| **SmartSolar MPPT 100/30** | BLE Instant Readout | 0x01 solar charger | RESPONDS |
+| **Orion-Tr Smart 12/12-30 Isolated** DC-DC | BLE Instant Readout | 0x04 DC/DC converter | RESPONDS |
+| Shore charger | ? | — | not seen in BLE scans |
 
-| Device | Expected interface | Open question |
-|---|---|---|
-| BMV-700 battery monitor | VE.Direct port → VE.Direct-USB cable → Pi | none (the BMV-700 has no built-in Bluetooth) |
-| Solar controller (MPPT) | VE.Direct and/or BLE | Exact model; SmartSolar = BLE, BlueSolar = VE.Direct only |
-| DC-DC charger | BLE instant readout? | Exact model. Not every Orion supports instant readout. |
-| Shore power charger | BLE instant readout? | Exact model (Blue Smart IP22/IP65/…) |
+It's a BMV-712, not a BMV-700: no VE.Direct cable is needed. Evidence and the
+VERIFIED criteria are in `docs/pid-register.md`.
 
-## Paths into the system
+## How the data gets in (Decision #45)
 
-1. **VE.Direct (BMV-700, MPPT):** a USB cable into the Pi. Two options:
-   - **bigair reads VE.Direct text frames directly** (recommended: one Pi,
-     no extra OS). The VE.Direct text protocol is documented by Victron:
-     labels such as `V`, `I`, `P`, `SOC`, `CE`, `TTG`, and for MPPTs `VPV`,
-     `PPV`, `CS`, `H20`. Scale per Victron's protocol document and test it
-     with captured frames.
-   - Venus OS (on a second Pi or a Cerbo GX), bridged to Mosquitto. It's
-     richer, but it's a second OS to maintain. Choose it only if a Cerbo
-     shows up in the inventory.
-2. **Victron BLE instant readout (DC-DC, shore, SmartSolar):** an HA
-   integration decrypts the advertisements with each device's encryption
-   key, which lives in `secrets.yaml`. Its entities go to MQTT via
-   `mqtt_statestream`, and bigair records them (`/home-assistant-config`).
-   Confirm each device actually advertises instant readout before relying
-   on it.
+- **bigair decodes Instant Readout itself.** `victron_io.py` (bleak, using the host's
+  BlueZ over the read-only `/run/dbus` mount) passes manufacturer data for company
+  0x02E1 from the configured MACs to `victron_ble.py`. HA's Bluetooth stays off,
+  so there's no `mqtt_statestream` and the XGPS160 keeps the radio.
+- **Format:** Victron's "Extra manufacturer data" spec
+  (wiki.victronenergy.com/rend/ble/extra_manufacturer_data). Byte 0 is `0x10`, byte 4 is
+  the record type, bytes 5–6 are the nonce (LSB first), and byte 7 is key[0], used as
+  a check. The data is AES-128-CTR with counter block `nonce ‖ 14 zero bytes`, then an
+  LSB-first bitstream. Code offsets are the spec's start bits minus 32. NA values are
+  raw bit patterns: compare them before sign conversion. (Battery current NA is
+  0x3FFFFF, not −1.) Length-check every field, because records may grow.
+- **Other packets:** devices also send non-`0x10` advertisements. Those are skipped
+  silently (`NotInstantReadout`).
+- **Keys:** VictronConnect → device → gear → Product info → Instant readout details →
+  Show. They go in the Pi's `deploy/.env` as `VICTRON_<NAME>_MAC` / `VICTRON_<NAME>_KEY`,
+  and **never** in the repo or test fixtures. Tests encrypt synthetic records with a
+  made-up key. **Changing a device's Bluetooth PIN changes its key**, and bigair then
+  logs a key mismatch once per device.
+- **Output:** `ElectricalTracker` keeps the latest reading per device. It publishes
+  `bigair/electrical/state` (retained, every 5 s; HA sensors "House battery", "Solar
+  power", …) and writes `electrical` points every 10 s per device. Freshness uses
+  monotonic time (#107). After 2 min of silence a device's values go null (unknown).
+- **Adding a Victron device:** add its MAC and key pair to `.env`. If it uses a record
+  type other than 0x01, 0x02 or 0x04, add that layout from the spec to
+  `victron_ble.decode` with a synthetic test. Then add its keys to `ElectricalTracker._MAP`
+  and `ha_discovery.ELECTRICAL_SENSORS`.
 
 ## Per-circuit loads: INA228 on ESP32 (Dan's choice)
 
@@ -57,8 +68,9 @@ Every row is **UNVERIFIED** until Dan confirms the model and ports
 
 ## Accounting (M3)
 
-- **Charging by source:** solar = MPPT `PPV`/output power; alternator =
-  DC-DC output; shore = charger output.
+- **Charging by source:** solar = MPPT battery current × voltage (or `pv_power_w`);
+  alternator = Orion output (its record has no current: estimate it from the BMV's
+  current while the Orion is on, or add a shunt); shore = charger output.
 - **Consumption by load:** Σ INA228 circuits. "Other" = BMV net minus known
   loads minus charge sources, which shows unmetered loads.
 - **Daily energy budget:** Wh in by source vs Wh out by load per local day,

@@ -64,8 +64,8 @@ parallel with the hardware issues (#4, #15).
 
 ## M3 — Electrical and polish
 
-- Victron: VE.Direct reader for BMV-700 and MPPT; Victron BLE (DC-DC, shore)
-  via HA → `mqtt_statestream`.
+- Victron: bigair decodes BLE Instant Readout from the BMV-712 Smart, SmartSolar
+  MPPT and Orion DC-DC (#109, Decision #45). Shore charger: not seen yet.
 - INA228 per-circuit node (fan, Webasto, lights, internet, inverter) with
   clamp-meter calibration.
 - Energy dashboards: charging by source vs consumption by load, daily
