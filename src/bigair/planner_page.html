@@ -416,7 +416,9 @@ function noteLink(file) {
   if (!o || !o.vault || !file) return "";
   const path = (o.folder ? o.folder + "/" : "") + file.replace(/\.md$/, "");
   const href = `obsidian://open?vault=${encodeURIComponent(o.vault)}&file=${encodeURIComponent(path)}`;
-  return ` <a class="notelink" href="${esc(href)}" title="Open the note in Obsidian">📝</a>`;
+  // A new window, not the frame: inside HA's Trip view (an iframe), iOS ignores an
+  // app link that tries to open in place, but hands a new window to Obsidian (#121).
+  return ` <a class="notelink" href="${esc(href)}" target="_blank" rel="noopener" title="Open the note in Obsidian">📝</a>`;
 }
 
 // ---------- a multi-day trip's schedule on the whole-trip plan (#119) ----------
