@@ -10,6 +10,7 @@
 #   com.bigair.planner      bigair planner on MAC_TS_IP:8092 (tank from the Pi's MQTT)
 #   com.bigair.relay-ha     MAC_TS_IP:8123 -> PI_TS_IP:8123 (Home Assistant)
 #   com.bigair.relay-grafana MAC_TS_IP:3000 -> PI_TS_IP:3000
+#   com.bigair.backup-pull  hourly: pull the Pi's nightly restic backup (#111)
 # Idempotent: re-running rewrites and reloads them.
 set -euo pipefail
 
@@ -17,7 +18,7 @@ repo="$(cd "$(dirname "$0")/../.." && pwd)"
 envfile="$repo/deploy/.env.mac"
 agents="$HOME/Library/LaunchAgents"
 logs="$HOME/Library/Logs/bigair"
-labels=(com.bigair.planner com.bigair.relay-ha com.bigair.relay-grafana)
+labels=(com.bigair.planner com.bigair.relay-ha com.bigair.relay-grafana com.bigair.backup-pull)
 
 unload() {
   for l in "${labels[@]}"; do
@@ -46,7 +47,7 @@ setkey() {  # setkey NAME VALUE: replace NAME=... in the env file
 for arg in "$@"; do
   case "$arg" in
     --copy-keys)
-      for k in GOOGLE_MAPS_API_KEY EIA_API_KEY ANTHROPIC_API_KEY; do
+      for k in GOOGLE_MAPS_API_KEY EIA_API_KEY ANTHROPIC_API_KEY RESTIC_PASSWORD; do
         # shellcheck disable=SC2029  # $k is meant to expand on this side
         v="$(ssh bigair-ha "grep '^$k=' ~/BigAirHomeAssistant/deploy/.env | cut -d= -f2-" || true)"
         [[ -n "$v" ]] && setkey "$k" "$v"
@@ -73,6 +74,7 @@ uv="$(command -v uv)"
 
 xml() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"; }
 
+every=""  # set to N seconds for a periodic job instead of a kept-alive service
 plist() {  # plist LABEL ENV_XML ARG...
   local label="$1" envxml="$2"
   shift 2
@@ -86,7 +88,11 @@ plist() {  # plist LABEL ENV_XML ARG...
     echo '</array>'
     echo "<key>WorkingDirectory</key><string>$(xml "$repo")</string>"
     echo "<key>EnvironmentVariables</key><dict>$envxml</dict>"
-    echo '<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>'
+    if [[ -n "$every" ]]; then
+      echo "<key>RunAtLoad</key><true/><key>StartInterval</key><integer>$every</integer>"
+    else
+      echo '<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>'
+    fi
     echo '<key>ThrottleInterval</key><integer>15</integer>'
     echo "<key>StandardOutPath</key><string>$logs/$label.log</string>"
     echo "<key>StandardErrorPath</key><string>$logs/$label.log</string>"
@@ -120,6 +126,10 @@ relay() {  # relay LABEL PORT
 }
 relay com.bigair.relay-ha 8123
 relay com.bigair.relay-grafana 3000
+every=3600
+plist com.bigair.backup-pull "<key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>" \
+  /bin/bash "$repo/deploy/mac/backup-pull.sh"
+every=""
 for l in "${labels[@]}"; do
   launchctl bootstrap "gui/$(id -u)" "$agents/$l.plist"
 done
@@ -127,4 +137,5 @@ done
 echo "planner:  http://$MAC_TS_IP:8092/"
 echo "HA:       http://$MAC_TS_IP:8123/"
 echo "Grafana:  http://$MAC_TS_IP:3000/"
+echo "backups:  ~/Backups/bigair-restic (pulled hourly when the Pi is reachable)"
 echo "logs:     $logs"

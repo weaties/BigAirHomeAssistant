@@ -1,0 +1,12 @@
+# Nightly backup of data + configuration (#111): deploy/backup.sh → restic repo in
+# data/backup/restic, which the Mac pulls over Tailscale. Installed by bootstrap.sh.
+[Unit]
+Description=BigAir nightly backup (restic)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=@REPO@/deploy/backup.sh
+Nice=10
+IOSchedulingClass=idle
