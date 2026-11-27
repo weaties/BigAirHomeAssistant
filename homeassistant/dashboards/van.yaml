@@ -194,6 +194,80 @@ views:
               Charts and the mpg map: <a href="http://bigair-ha.local:3000/d/bigair-phone?kiosk"
               target="_blank">Grafana phone dashboard</a> (van Wi-Fi).
 
+      # House electrical from the Victron devices over BLE (#109).
+      - type: grid
+        cards:
+          - type: heading
+            heading: House power
+            heading_style: title
+            icon: mdi:home-battery
+          - type: tile
+            entity: sensor.bigair_van_house_battery
+            name: House battery
+            color: green
+            features_position: bottom
+            features:
+              - type: trend-graph
+                hours_to_show: 24
+            grid_options:
+              columns: full
+          - type: tile
+            entity: sensor.bigair_van_house_power
+            name: Net power
+            color: amber
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_house_voltage
+            name: Voltage
+            color: amber
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_house_time_to_go
+            name: Time to go
+            icon: mdi:timer-sand
+            color: amber
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_solar_power
+            name: Solar
+            color: yellow
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_solar_today
+            name: Solar today
+            icon: mdi:solar-power-variant
+            color: yellow
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_solar_charger
+            name: Charger
+            color: yellow
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_alternator_charger
+            name: Alternator charger
+            color: blue
+            grid_options:
+              columns: 6
+          - type: tile
+            entity: sensor.bigair_van_starter_battery
+            name: Starter battery
+            color: blue
+            grid_options:
+              columns: 6
+
   # ---------------------------------------------------------------- Fill-up
   - title: Fill-up
     path: fill

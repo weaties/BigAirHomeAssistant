@@ -61,6 +61,10 @@ class VictronDecodeError(ValueError):
     """Not a decodable Instant Readout advertisement."""
 
 
+class NotInstantReadout(VictronDecodeError):
+    """One of the device's other advertisement types: normal, and ignored."""
+
+
 class VictronKeyMismatch(VictronDecodeError):
     """The advertisement's key byte doesn't match ours (key changed with the PIN?)."""
 
@@ -87,8 +91,10 @@ def _scaled(v: int | None, scale: float) -> float | None:
 
 def decrypt(adv: bytes, key: bytes) -> tuple[int, bytes]:
     """(record type, decrypted data) from the manufacturer data."""
-    if len(adv) <= HEADER_BYTES or adv[0] != PRODUCT_ADVERTISEMENT:
-        raise VictronDecodeError(f"not an Instant Readout advertisement ({len(adv)} bytes)")
+    if adv[:1] != bytes([PRODUCT_ADVERTISEMENT]):
+        raise NotInstantReadout(f"advertisement type {adv[:1].hex() or 'empty'}")
+    if len(adv) <= HEADER_BYTES:
+        raise VictronDecodeError(f"Instant Readout too short ({len(adv)} bytes)")
     if adv[7] != key[0]:
         raise VictronKeyMismatch(f"key byte {adv[7]:#04x} != {key[0]:#04x}")
     nonce = adv[5:7]

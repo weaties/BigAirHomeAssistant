@@ -123,13 +123,20 @@ def _run(args: argparse.Namespace) -> int:
         logger.warning("Victron config: {}", problem)
 
     async def victron() -> None:
-        from bigair.victron_ble import VictronDecodeError, VictronKeyMismatch, decode
+        from bigair.victron_ble import (
+            NotInstantReadout,
+            VictronDecodeError,
+            VictronKeyMismatch,
+            decode,
+        )
         from bigair.victron_io import victron_adverts
 
         warned: set[tuple[str, str]] = set()
         async for mac, data, ts, mono in victron_adverts(vkeys):
             try:
                 sample = decode(data, vkeys[mac], ts, mono)
+            except NotInstantReadout:
+                continue  # Victron devices also send other advertisement types
             except VictronKeyMismatch as e:
                 if (mac, "key") not in warned:  # once per device: the key changes with the PIN
                     warned.add((mac, "key"))

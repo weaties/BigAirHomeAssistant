@@ -38,7 +38,9 @@ engine_load_pct, boost_kpa, fuel_rate_lph
 - fuel (tag method): tank_gal, engine_used_gal, heater_used_gal, range_mi, mpg_rolling, \
 mpg_instant_30s, fuel_rate_gph, stale, calibrating
 - heater (tag method): running, power_level, pump_hz, fuel_gph, used_gal
-- electrical (tag device: bmv700, mppt, dcdc, shore): voltage_v, current_a, power_w, soc_pct
+- electrical (tag device: bmv, mppt, dcdc; every 10 s): voltage_v, current_a, power_w, \
+soc_pct, consumed_ah, time_to_go_s (bmv); pv_power_w, yield_today_wh, state (mppt); \
+input_voltage_v, state, off_reason (dcdc)
 - load (tag circuit: fan, webasto, lights, internet, inverter, pi): current_a, voltage_v, power_w
 
 van_history:

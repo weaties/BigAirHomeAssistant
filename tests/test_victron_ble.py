@@ -15,6 +15,7 @@ import pytest
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from bigair.victron_ble import (
+    NotInstantReadout,
     VictronDecodeError,
     VictronKeyMismatch,
     decode,
@@ -218,3 +219,9 @@ def test_malformed_adverts_raise(adv: bytes) -> None:
 def test_unsupported_record_type_raises() -> None:
     with pytest.raises(VictronDecodeError):
         decode(_advert(0x03, bytes(16)), KEY, TS, 0.0)  # inverter: not in the van
+
+
+def test_other_advertisement_types_are_told_apart() -> None:
+    """Seen on the van: the BMV also sends 16–27-byte adverts that don't start 0x10."""
+    with pytest.raises(NotInstantReadout):
+        decode(bytes([0x11]) + bytes(20), KEY, TS, 0.0)
