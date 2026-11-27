@@ -605,3 +605,17 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     held and alternator = net − solar + loads, both flagged as estimates. Daily totals
     go to `energy` in van_history: one point per local day, stamped at local midnight
     and rewritten as it grows. Grafana `bigair-energy` shows them.
+48. **2026-11-27 — Van LED strip via HA's TP-Link integration, into HomeKit** (Dan's
+    request, #68; first drafted 2026-11-22). The strip is a Tapo L930 on the `bigair`
+    Wi-Fi (seen at 192.168.8.178). HA's built-in `tplink` integration controls it over
+    the LAN, so it keeps working offline. That integration is config-entry only, so it's
+    added in the UI like MQTT: `configuration.yaml` carries a note, and the TP-Link
+    account login it asks for once (for the strip's local KLAP auth) lives in HA's
+    `.storage`, never in git. HA has no `dhcp` discovery, so the strip needs a DHCP
+    reservation on the GL.iNet router. **HomeKit:** HA's HomeKit Bridge (`homekit:`,
+    bridge "BigAir", filtered to the `light` domain) publishes it to Apple Home, Siri
+    and Control Center. That brings in `zeroconf` for mDNS (amends #27: it may suggest
+    discovered devices, which are ignored). HomeKit control is local: the phone must be on
+    the van Wi-Fi (there's no Apple home hub in the van). So it doesn't work while the
+    phone is the router's hotspot uplink (#104). Lighting is HA-only: no bigair or Influx
+    involvement.

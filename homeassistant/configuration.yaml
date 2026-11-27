@@ -30,6 +30,24 @@ lovelace:        # the phone dash (#64), provisioned from git like Grafana
 #   bluetooth       M3 Victron instant readout (frees the radio for the XGPS160 trial)
 #   assist_pipeline CarPlay Assist "what's my range?" (UNVERIFIED offline)
 
+# Van lights (#68): the Tapo L930 LED strip uses HA's TP-Link Smart Home
+# integration (tplink). It's config-entry only, so it's added in the UI, not
+# here: Settings → Devices & services → Add integration → TP-Link Smart Home,
+# host = the strip's reserved IP, then the TP-Link account login (used for
+# local auth only; control stays on the van LAN). No dhcp discovery means HA
+# won't follow an IP change, so the strip needs a DHCP reservation.
+
+# Apple Home (#68): the HomeKit Bridge publishes HA's lights (just the LED strip for
+# now) to the Home app, Siri and Control Center. Pair once from HA's notification
+# (Home app → Add Accessory → scan the QR code). Control is local, so the phone must
+# be on the van Wi-Fi. Pulls in zeroconf (mDNS); see Decision #48.
+homekit:
+  - name: BigAir
+    port: 21063
+    filter:
+      include_domains:
+        - light
+
 # MQTT broker connection is configured in the UI (config entry) per HA's
 # current MQTT integration. HA runs with network_mode: host, so Compose
 # service names don't resolve for it: the broker is localhost:1883, not
