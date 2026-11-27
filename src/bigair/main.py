@@ -132,7 +132,9 @@ def _run(args: argparse.Namespace) -> int:
         from bigair.victron_io import victron_adverts
 
         warned: set[tuple[str, str]] = set()
-        async for mac, data, ts, mono in victron_adverts(vkeys):
+        scan_s = float(env.get("VICTRON_SCAN_S", "5"))  # bursts: the GPS shares the radio
+        pause_s = float(env.get("VICTRON_PAUSE_S", "25"))
+        async for mac, data, ts, mono in victron_adverts(vkeys, scan_s, pause_s):
             try:
                 sample = decode(data, vkeys[mac], ts, mono)
             except NotInstantReadout:

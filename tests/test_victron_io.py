@@ -51,7 +51,7 @@ async def test_only_wanted_victron_adverts_pass() -> None:
         (MAC.lower(), {0x02E1: b"\x10ours"}),
     ]
     before = time.monotonic()
-    gen = victron_io.victron_adverts([MAC.lower()])
+    gen = victron_io.victron_adverts([MAC.lower()], scan_s=0.5, pause_s=0.01)
     mac, data, ts, mono = await anext(gen)
     await gen.aclose()
     assert (mac, data) == (MAC, b"\x10ours")
@@ -62,7 +62,17 @@ async def test_only_wanted_victron_adverts_pass() -> None:
 async def test_a_failed_scan_start_is_retried() -> None:
     FakeScanner.fail_first = True
     FakeScanner.adverts = [(MAC, {0x02E1: b"\x10ours"})]
-    gen = victron_io.victron_adverts([MAC], retry_s=0.01)
+    gen = victron_io.victron_adverts([MAC], scan_s=0.5, pause_s=0.01, retry_s=0.01)
     assert (await anext(gen))[1] == b"\x10ours"
     await gen.aclose()
     assert FakeScanner.starts == 2
+
+
+async def test_scans_in_bursts_so_the_gps_keeps_the_radio() -> None:
+    """Each window opens the scanner afresh; between windows it's closed."""
+    FakeScanner.adverts = [(MAC, {0x02E1: b"\x10ours"})]
+    gen = victron_io.victron_adverts([MAC], scan_s=0.05, pause_s=0.01)
+    for _ in range(3):
+        assert (await anext(gen))[1] == b"\x10ours"
+    await gen.aclose()
+    assert FakeScanner.starts == 3
