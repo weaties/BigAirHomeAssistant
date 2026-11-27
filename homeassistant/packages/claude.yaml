@@ -1,0 +1,23 @@
+# Claude's evening briefing (#94). bigair's planner writes it (Claude, with the plan,
+# weather and POIs) and publishes it; HA only delivers it to the phone. Tapping it
+# opens the planner, which shows the full text.
+#
+# The phone's notify action comes from secrets.yaml (mobile_app_notify), so the
+# device name never lands in this public repo.
+
+automation:
+  - id: bigair_claude_briefing
+    alias: Claude briefing → phone
+    description: Tomorrow's drive, written by Claude in the planner each evening.
+    triggers:
+      - trigger: mqtt
+        topic: bigair/claude/briefing
+    actions:
+      - action: !secret mobile_app_notify
+        data:
+          title: "{{ trigger.payload_json.title }}"
+          message: "{{ trigger.payload_json.message }}"
+          data:
+            tag: bigair_claude_briefing
+            url: "{{ trigger.payload_json.url }}"
+            clickAction: "{{ trigger.payload_json.url }}"

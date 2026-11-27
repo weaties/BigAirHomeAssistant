@@ -44,6 +44,43 @@ class ObdSample:
     odometer_mi: float | None = None
     fuel_level_pct: float | None = None
     battery_v: float | None = None  # WiCAN's own ATRV reading at OBD pin 16
+    # Slow-polled (#79): only present on the rounds that asked for them.
+    coolant_temp_c: float | None = None
+    oil_temp_c: float | None = None
+    ambient_temp_c: float | None = None
+    # time.monotonic() when the edge read it (#107). Time between samples comes from
+    # this, because the wall clock steps when chrony syncs after a cold boot.
+    mono_s: float | None = None
+
+
+@dataclass(frozen=True)
+class VictronSample:
+    """One decoded Victron Instant Readout record (#109). None = not available.
+
+    `device` is the Influx tag: bmv (battery monitor), mppt (solar), dcdc (Orion).
+    `voltage_v`/`current_a` are the battery side (DC/DC: output voltage).
+    """
+
+    ts: datetime  # UTC
+    mono_s: float  # time.monotonic() at the edge, for freshness and throttling (#107)
+    device: str
+    voltage_v: float | None = None
+    current_a: float | None = None
+    power_w: float | None = None  # BMV: voltage × current (not in the record)
+    soc_pct: float | None = None
+    consumed_ah: float | None = None  # ≤ 0, Victron's sign
+    time_to_go_s: int | None = None
+    alarm: int | None = None
+    aux_voltage_v: float | None = None  # BMV aux input 0: starter battery
+    midpoint_voltage_v: float | None = None
+    temperature_c: float | None = None
+    pv_power_w: int | None = None
+    yield_today_wh: float | None = None
+    load_current_a: float | None = None
+    state: str | None = None
+    charger_error: int | None = None
+    input_voltage_v: float | None = None
+    off_reason: int | None = None
 
 
 @dataclass(frozen=True)

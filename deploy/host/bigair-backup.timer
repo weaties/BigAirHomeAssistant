@@ -1,0 +1,11 @@
+# 03:30 local, or at the next boot if the van was off then (Persistent).
+[Unit]
+Description=BigAir nightly backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

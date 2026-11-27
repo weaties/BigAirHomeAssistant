@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from datetime import tzinfo
+
+    from bigair.byways import ByWayIndex
+    from bigair.claude_service import ClaudeService
+    from bigair.destinations import Destination
+    from bigair.fuel_sources import LiveFuel
+    from bigair.travel_rules import TravelRules
+    from bigair.trip_service import TripEdges
 
 
 def _display(args: argparse.Namespace) -> int:
@@ -56,15 +68,29 @@ def _display(args: argparse.Namespace) -> int:
     return 0
 
 
+def _local_tz(name: str) -> tzinfo:
+    """The van's local zone for daily energy (#113): TZ from deploy/.env, else UTC."""
+    from datetime import UTC
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        return ZoneInfo(name) if name else UTC
+    except (ZoneInfoNotFoundError, ValueError):
+        return UTC
+
+
 def _run(args: argparse.Namespace) -> int:
     import asyncio
     import signal
+    import time
     from datetime import UTC, datetime
 
     from loguru import logger
 
     from bigair.clock import kernel_clock_synced
+    from bigair.electrical import ElectricalTracker, victron_keys
     from bigair.gpsd_io import gpsd_fixes
+    from bigair.ha_discovery import ELECTRICAL_STATE_TOPIC
     from bigair.influx_io import InfluxWriter
     from bigair.mqtt_io import run_mqtt
     from bigair.service import FuelService, ServiceConfig
@@ -102,6 +128,64 @@ def _run(args: argparse.Namespace) -> int:
             if writer is not None:
                 for point in svc.influx_points(sample.ts):
                     writer.add(point)
+
+    # House electrical (#109): Victron Instant Readout over BLE, keys in deploy/.env.
+    # Daily energy (#113) is integrated in local days; today's totals survive restarts.
+    from bigair.energy import EnergyMeter
+    from bigair.state_file import StateFileError, read_state, write_state
+
+    energy_path = Path(env.get("BIGAIR_ENERGY_FILE", "/data/energy_state.json"))
+    local_tz = _local_tz(env.get("TZ", ""))
+    try:
+        saved = read_state(energy_path)
+    except StateFileError as e:  # today's totals only; start the day over rather than stop
+        logger.warning("energy state unreadable, starting fresh: {}", e)
+        saved = None
+    meter = EnergyMeter(local_tz, saved)
+    electrical = ElectricalTracker(meter)
+    vkeys, vproblems = victron_keys(dict(env))
+    for problem in vproblems:
+        logger.warning("Victron config: {}", problem)
+
+    async def victron() -> None:
+        from bigair.victron_ble import (
+            NotInstantReadout,
+            VictronDecodeError,
+            VictronKeyMismatch,
+            decode,
+        )
+        from bigair.victron_io import victron_adverts
+
+        warned: set[tuple[str, str]] = set()
+        scan_s = float(env.get("VICTRON_SCAN_S", "5"))  # bursts: the GPS shares the radio
+        pause_s = float(env.get("VICTRON_PAUSE_S", "25"))
+        async for mac, data, ts, mono in victron_adverts(vkeys, scan_s, pause_s):
+            try:
+                sample = decode(data, vkeys[mac], ts, mono)
+            except NotInstantReadout:
+                continue  # Victron devices also send other advertisement types
+            except VictronKeyMismatch as e:
+                if (mac, "key") not in warned:  # once per device: the key changes with the PIN
+                    warned.add((mac, "key"))
+                    logger.warning("Victron {}: {} (re-copy the key from VictronConnect)", mac, e)
+                continue
+            except VictronDecodeError as e:
+                if (mac, str(e)) not in warned:
+                    warned.add((mac, str(e)))
+                    logger.warning("Victron {}: {}", mac, e)
+                continue
+            for point in electrical.update(sample):
+                if writer is not None:
+                    writer.add(point)
+
+    async def energy_saver() -> None:
+        while True:
+            await asyncio.sleep(60)
+            if meter.today.day:
+                try:
+                    write_state(energy_path, meter.to_state(), durable=False)
+                except OSError as e:
+                    logger.warning("energy state write failed: {}", e)
 
     gauge_path = env.get("BIGAIR_GAUGE_FILE")
 
@@ -149,6 +233,7 @@ def _run(args: argparse.Namespace) -> int:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
         tasks = [
+            *([asyncio.create_task(t()) for t in (victron, energy_saver)] if vkeys else []),
             asyncio.create_task(ingest()),
             asyncio.create_task(gps()),
             asyncio.create_task(influx_flusher()),
@@ -160,13 +245,19 @@ def _run(args: argparse.Namespace) -> int:
                     state_payload=lambda: svc.state_payload(datetime.now(UTC)),
                     on_command=lambda t, p: svc.handle_command(t, p, datetime.now(UTC)),
                     drain_outbox=svc.drain_outbox,
-                    extra_states=lambda: [svc.van_state(datetime.now(UTC))],
+                    extra_states=lambda: [
+                        svc.van_state(datetime.now(UTC)),
+                        (ELECTRICAL_STATE_TOPIC, electrical.state_payload(time.monotonic())),
+                    ],
                 )
             ),
         ]
         await stop.wait()
         logger.info("stopping: saving fuel state")
         svc.flush(datetime.now(UTC))
+        if meter.today.day:
+            with contextlib.suppress(OSError):
+                write_state(energy_path, meter.to_state(), durable=False)
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -174,6 +265,350 @@ def _run(args: argparse.Namespace) -> int:
             await asyncio.to_thread(writer.flush)
 
     asyncio.run(main_async())
+    return 0
+
+
+def _trip_edges(mqtt_host: str, gpsd: bool = True) -> TripEdges:
+    """The real network edges for a trip plan (#71, #75)."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    from loguru import logger
+
+    from bigair import eia_io, google_io, weather_io
+    from bigair.byways import load_byways
+    from bigair.dest_sources import load_ioverlander, load_public_land
+    from bigair.fuel_sources import live_fuel_from_state
+    from bigair.gpsd_io import current_fix
+    from bigair.ha_discovery import FUEL_STATE_TOPIC
+    from bigair.mqtt_io import read_retained
+    from bigair.poi import load_pois
+    from bigair.trip_service import TripEdges, TripError
+
+    key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if not key:
+        raise TripError("GOOGLE_MAPS_API_KEY isn't set (Routes API + Places API (New))")
+    eia_key = os.environ.get("EIA_API_KEY") or "DEMO_KEY"
+
+    def fuel_state() -> LiveFuel | None:
+        payload = asyncio.run(read_retained(mqtt_host, 1883, FUEL_STATE_TOPIC))
+        return live_fuel_from_state(payload) if payload else None
+
+    def position() -> tuple[float, float] | None:
+        fix = asyncio.run(current_fix()) if gpsd else None
+        return (fix.lat, fix.lon) if fix else None
+
+    # POIs from the vault (#88): the Syncthing folder, mounted read-only.
+    poi_dir = os.environ.get("POI_DIR", "")
+    pois = (lambda: load_pois(Path(poi_dir))) if poi_dir else None
+    # Scenic byways for slow mode (#100): a local GeoJSON of byway lines, loaded once.
+    byways_file = os.environ.get("BYWAYS_FILE", "")
+    byway_cache: dict[str, Any] = {}
+
+    def byways() -> ByWayIndex | None:
+        if "idx" not in byway_cache:
+            idx, problems = load_byways(Path(byways_file))
+            for p in problems:
+                logger.warning("{}", p)
+            byway_cache["idx"] = idx
+        return byway_cache["idx"]  # type: ignore[no-any-return]
+
+    # Destination sources (#91): Dan's iOverlander exports and a public-land GeoJSON.
+    iover_dir = os.environ.get("IOVERLANDER_DIR", "")
+    land_file = os.environ.get("PUBLIC_LAND_FILE", "")
+
+    return TripEdges(
+        route=lambda o, d, via, avoid, alt: google_io.compute_route(key, o, d, via, avoid, alt),
+        search=lambda seg, tok, q, typ: google_io.search_along(key, seg, tok, q, typ),
+        now=lambda: datetime.now(UTC),
+        eia=lambda: eia_io.fetch_diesel(eia_key),
+        forecasts=weather_io.fetch_forecasts,
+        alerts=weather_io.fetch_alerts,
+        fuel_state=fuel_state,
+        position=position,
+        pois=pois,
+        drive_s=lambda o, d: google_io.drive_leg(key, o, d),
+        ioverlander=(lambda: load_ioverlander(Path(iover_dir))) if iover_dir else None,
+        public_land=(lambda: load_public_land(Path(land_file))) if land_file else None,
+        campgrounds=lambda bbox: google_io.search_campgrounds(key, bbox),
+        byways=byways if byways_file else None,
+    )
+
+
+def _fuel_plan(args: argparse.Namespace) -> int:
+    import asyncio
+    import json
+    from datetime import datetime
+
+    from bigair.fuel_plan import (
+        PlanInput,
+        PlanRefusedError,
+        format_options,
+        naive_plan,
+        plan_options,
+        trip_from_dict,
+        trip_to_dict,
+    )
+    from bigair.fuel_sources import live_fuel_from_state, parse_discounts
+    from bigair.trip_service import TripError, TripRequest, plan_trip, weather_summary
+
+    reserves = tuple(float(r) for r in args.reserves.split(","))
+    if args.origin and args.to:  # live: route, prices and weather from the network
+        try:
+            req = TripRequest(
+                origin=args.origin,
+                destination=args.to,
+                via=tuple(args.via or ()),
+                round_trip=args.round_trip,
+                local_mi=args.local_mi,
+                depart=datetime.fromisoformat(args.depart) if args.depart else None,
+                return_depart=(
+                    datetime.fromisoformat(args.return_depart) if args.return_depart else None
+                ),
+                reserves=reserves,
+                discounts=parse_discounts(args.discount),
+                tank_gal=args.tank_gal,
+                mpg=args.mpg,
+                calibrating=args.calibrating,
+                capacity_gal=args.capacity,
+                stop_penalty_usd=args.stop_penalty,
+                home_price=args.home_price,
+                max_age_h=args.max_age_h,
+            )
+            r = plan_trip(req, _trip_edges(args.mqtt_host, gpsd=False))
+        except TripError as e:
+            print(f"refused: {e}")  # CLI output, not operational logging
+            return 2
+        if args.save:
+            trip = trip_to_dict(r.trip_mi, r.stations, r.inp.end_value_per_gal)
+            Path(args.save).write_text(json.dumps(trip, indent=1))
+        lines = [f"Note: {w}" for w in r.warnings]
+        if r.unpriced:
+            names = ", ".join(
+                f"{u.name}{', ' + u.where if u.where else ''} (mi {u.mile:.0f})" for u in r.unpriced
+            )
+            lines.append(f"Open Roads stations Google has no price for (check the app): {names}")
+        lines += [
+            f"Alert: {a.event}, {a.area[:70]}"
+            + (f" (until {a.ends:%a %H:%M} UTC)" if a.ends else "")
+            for a in r.alerts
+        ]
+        lines += [f"Weather {w}" for w in weather_summary(r)]
+        print("\n".join([*lines, "", format_options(r.inp, r.options, r.naive)]))
+        return 0
+
+    if not args.trip:
+        print("give a trip file, or --from and --to")  # CLI output
+        return 2
+    route_mi, stations, home = trip_from_dict(json.loads(Path(args.trip).read_text()))
+    tank, mpg, calibrating, stale = args.tank_gal, args.mpg, args.calibrating, False
+    if args.live:
+        from bigair.ha_discovery import FUEL_STATE_TOPIC
+        from bigair.mqtt_io import read_retained
+
+        payload = asyncio.run(read_retained(args.mqtt_host, 1883, FUEL_STATE_TOPIC))
+        if payload is None:
+            print(f"no fuel state from {args.mqtt_host}")  # CLI output
+            return 2
+        live = live_fuel_from_state(payload)
+        tank = live.tank_gal if tank is None else tank
+        mpg = live.mpg if mpg is None else mpg
+        calibrating, stale = calibrating or live.calibrating, live.stale
+    if tank is None or mpg is None:
+        print("need --tank-gal and --mpg, or --live")  # CLI output
+        return 2
+    inp = PlanInput(
+        route_mi=route_mi,
+        stations=stations,
+        start_gal=tank,
+        mpg=mpg,
+        capacity_gal=args.capacity,
+        stop_penalty_usd=args.stop_penalty,
+        end_value_per_gal=home if args.home_price is None else args.home_price,
+        calibrating=calibrating,
+        stale=stale,
+    )
+    try:
+        text = format_options(inp, plan_options(inp, reserves), naive_plan(inp))
+    except PlanRefusedError as e:
+        print(f"refused: {e}")  # CLI output, not operational logging
+        return 2
+    print(text)  # CLI output, not operational logging
+    return 0
+
+
+def _claude_service(edges: TripEdges | None, rules: TravelRules, cache: Path) -> ClaudeService:
+    """Claude for the planner (#89): disabled (but answering status) without a key."""
+    import asyncio
+    import json
+    from datetime import UTC, datetime
+
+    from bigair import claude_io, influxql_io, mqtt_io, weather_io
+    from bigair.claude_service import ClaudeService
+    from bigair.claude_tools import ToolDeps, forecast_from
+    from bigair.dest_sources import load_ioverlander, load_public_land
+    from bigair.gpsd_io import current_fix
+    from bigair.poi import load_pois, read_note_body
+    from bigair.state_file import StateFileError, read_state
+
+    poi_dir = Path(os.environ.get("POI_DIR", "/poi"))
+
+    def position() -> tuple[float, float] | None:
+        if edges is not None and edges.position is not None:
+            return edges.position()
+        fix = asyncio.run(current_fix())
+        return (fix.lat, fix.lon) if fix else None
+
+    def last_plan() -> dict[str, Any] | None:
+        try:
+            return read_state(cache)
+        except StateFileError:
+            return None
+
+    iover_dir = os.environ.get("IOVERLANDER_DIR", "")
+    land_file = os.environ.get("PUBLIC_LAND_FILE", "")
+
+    def places() -> list[Destination]:
+        out = load_ioverlander(Path(iover_dir))[0] if iover_dir else []
+        return out + (load_public_land(Path(land_file))[0] if land_file else [])
+
+    # "Ask the van" (#94): InfluxQL over the read-only Grafana token, if there is one.
+    influx_token = os.environ.get("INFLUX_GRAFANA_TOKEN", "")
+    telemetry = (lambda db, q: influxql_io.query(influx_token, db, q)) if influx_token else None
+
+    deps = ToolDeps(
+        position=position,
+        pois=lambda: load_pois(poi_dir)[0],
+        read_note=lambda name: read_note_body(poi_dir, name),
+        last_plan=last_plan,
+        forecast=forecast_from(weather_io.fetch_forecasts),
+        places=places,
+        telemetry=telemetry,
+    )
+    send = claude_io.make_send(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    cap = float(os.environ.get("CLAUDE_MONTHLY_CAP_USD") or 25.0)
+    svc = ClaudeService(send, deps, rules, cache.parent, cap, lambda: datetime.now(UTC))
+    mqtt_host = os.environ.get("MQTT_HOST", "localhost")
+
+    def publish(msg: dict[str, Any]) -> None:
+        payload = json.dumps(msg)
+        asyncio.run(mqtt_io.publish_once(mqtt_host, 1883, BRIEFING_TOPIC, payload))
+
+    svc.publish = publish
+    return svc
+
+
+BRIEFING_TOPIC = "bigair/claude/briefing"
+
+
+def _briefing_loop(svc: ClaudeService, at: tuple[int, int], url: str) -> None:
+    """Once a minute: send tonight's briefing when it's due (#94). Never raises."""
+    import time
+    from datetime import datetime
+
+    from loguru import logger
+
+    from bigair.telemetry import briefing_due
+
+    while True:
+        try:
+            last = svc.last_briefing() or {}
+            if briefing_due(datetime.now().astimezone(), at, last.get("date")):
+                out = svc.briefing(url)
+                logger.info("evening briefing: {}", out.get("stop"))
+        except Exception as e:  # keep the loop alive; the planner must keep serving
+            logger.warning("evening briefing failed: {}", e)
+        time.sleep(60)
+
+
+def _planner(args: argparse.Namespace) -> int:
+    from loguru import logger
+
+    from bigair.planner_server import make_server
+    from bigair.poi_near import reach_from_json
+    from bigair.travel_rules import TravelRules, load_rules
+    from bigair.trip_service import (
+        TripError,
+        chain_plan,
+        chain_request_from_json,
+        chain_to_json,
+        discover,
+        discover_request_from_json,
+        discover_to_json,
+        plan_trip,
+        pois_for_cached,
+        request_from_json,
+        result_to_json,
+    )
+
+    try:
+        edges = _trip_edges(args.mqtt_host)
+    except TripError as e:
+        # Serve the page and the cached plan anyway; planning says what's missing.
+        logger.error("planner can't plan: {}", e)
+        problem = str(e)
+        edges = None
+
+    # Dan's travel rules for slow mode (#90); a bad file is logged, not fatal.
+    rules_path = os.environ.get("TRAVEL_RULES", "")
+    try:
+        rules = load_rules(Path(rules_path) if rules_path else None)
+    except ValueError as e:
+        logger.error("travel rules ignored, using defaults: {}", e)
+        rules = TravelRules()
+
+    def run(payload: dict[str, Any]) -> dict[str, Any]:
+        if edges is None:
+            raise TripError(f"{problem} on the Pi (deploy/.env)")
+        return result_to_json(plan_trip(request_from_json(payload), edges, rules))
+
+    def run_pois(payload: dict[str, Any], last: dict[str, Any]) -> dict[str, Any]:
+        if edges is None:
+            raise TripError(f"{problem} on the Pi (deploy/.env)")
+        reach = payload.get("reach")
+        try:
+            r = reach_from_json(reach if isinstance(reach, dict) else None)
+        except ValueError as e:
+            raise TripError(str(e)) from e
+        return pois_for_cached(last, r, edges, rules)
+
+    def run_destinations(payload: dict[str, Any]) -> dict[str, Any]:
+        if edges is None:
+            raise TripError(f"{problem} on the Pi (deploy/.env)")
+        return discover_to_json(discover(discover_request_from_json(payload), edges, rules))
+
+    def run_chain(payload: dict[str, Any]) -> dict[str, Any]:
+        if edges is None:
+            raise TripError(f"{problem} on the Pi (deploy/.env)")
+        return chain_to_json(chain_plan(chain_request_from_json(payload), edges, rules))
+
+    claude = _claude_service(edges, rules, Path(args.cache))
+    # Evening briefing (#94): BRIEFING_TIME (local, HH:MM; empty = off).
+    btime = os.environ.get("BRIEFING_TIME", "19:00").strip()
+    if claude.send is not None and btime:
+        import threading
+
+        h, m = (int(x) for x in btime.split(":", 1))
+        url = os.environ.get("PLANNER_URL", "http://bigair-ha.local:8092/")
+        threading.Thread(
+            target=_briefing_loop, args=(claude, (h, m), url), daemon=True, name="briefing"
+        ).start()
+        logger.info("evening briefing at {} local", btime)
+
+    server = make_server(
+        args.host,
+        args.port,
+        run,
+        Path(args.cache),
+        daily_limit=args.daily_limit,
+        run_pois=run_pois,
+        run_destinations=run_destinations,
+        run_chain=run_chain,
+        claude=claude,
+    )
+    logger.info("trip planner on {}:{}", args.host, args.port)
+    with contextlib.suppress(KeyboardInterrupt):
+        server.serve_forever()
     return 0
 
 
@@ -188,6 +623,41 @@ def main(argv: list[str] | None = None) -> int:
         "--preview-port", type=int, default=0, help="keyless browser preview; 0 = off"
     )
     sub.add_parser("run", help="run the fuel service (WiCAN → fuel model → HA/MQTT, InfluxDB)")
+    fp = sub.add_parser("fuel-plan", help="where to buy fuel along a route, per reserve depth")
+    fp.add_argument("trip", nargs="?", help="trip JSON (route_mi, stations[]); or use --from/--to")
+    fp.add_argument("--from", dest="origin", help="live: origin address (Google Routes)")
+    fp.add_argument("--to", help="live: destination address")
+    fp.add_argument("--via", action="append", help="live: waypoint (repeatable)")
+    fp.add_argument("--round-trip", action="store_true", help="live: out and back the same way")
+    fp.add_argument("--local-mi", type=float, default=20.0, help="miles driven at the far end")
+    fp.add_argument("--depart", help="ISO time of departure (default now), for the price trend")
+    fp.add_argument(
+        "--discount",
+        default="loves=0.30,ta=0.30,petro=0.30",
+        help="member discount $/gal by brand (Open Roads); 'none' to disable",
+    )
+    fp.add_argument("--max-age-h", type=float, default=72.0, help="ignore older station prices")
+    fp.add_argument("--return-depart", help="live round trip: ISO time you leave for home")
+    fp.add_argument("--save", help="live: write the trip file for re-planning offline")
+    fp.add_argument("--live", action="store_true", help="tank and mpg from bigair over MQTT")
+    fp.add_argument("--mqtt-host", default=os.environ.get("BIGAIR_MQTT_HOST", "bigair-ha"))
+    fp.add_argument("--tank-gal", type=float, help="fuel on board at the start")
+    fp.add_argument("--mpg", type=float, help="expected mpg (be conservative)")
+    fp.add_argument("--calibrating", action="store_true", help="tank still calibrating: lower mpg")
+    fp.add_argument(
+        "--reserves", default="150,100,75,50", help="reserve depths to compare, in miles"
+    )
+    fp.add_argument("--capacity", type=float, default=47.0)
+    fp.add_argument("--stop-penalty", type=float, default=10.0, help="$ of hassle per stop")
+    fp.add_argument("--home-price", type=float, help="$/gal value of fuel left at the end")
+    pl = sub.add_parser("planner", help="serve the trip planner page (#75)")
+    pl.add_argument("--host", default="0.0.0.0")  # noqa: S104 — van LAN + tailnet, rate-limited
+    pl.add_argument("--port", type=int, default=int(os.environ.get("PLANNER_PORT", "8092")))
+    pl.add_argument("--cache", default=os.environ.get("PLANNER_CACHE", "/data/trip-plan.json"))
+    pl.add_argument(
+        "--daily-limit", type=int, default=int(os.environ.get("PLANNER_DAILY_LIMIT", "20"))
+    )
+    pl.add_argument("--mqtt-host", default=os.environ.get("MQTT_HOST", "localhost"))
     args = parser.parse_args(argv)
     if args.version:
         from importlib.metadata import version
@@ -198,4 +668,8 @@ def main(argv: list[str] | None = None) -> int:
         return _display(args)
     if args.command == "run":
         return _run(args)
+    if args.command == "fuel-plan":
+        return _fuel_plan(args)
+    if args.command == "planner":
+        return _planner(args)
     return 0

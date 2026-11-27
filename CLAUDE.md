@@ -49,13 +49,13 @@ it is referenced, so the rule stands without the skill.
 ## Architecture
 
 ```
- OBD-II port          Bluetooth          Bluetooth / VE.Direct       ESP32 nodes (ESPHome, future)
+ OBD-II port          Bluetooth          Bluetooth (BLE)             ESP32 nodes (ESPHome, future)
  ┌──────────┐        ┌──────────┐       ┌──────────────────┐        ┌───────────────────────┐
- │ WiCAN    │        │ XGPS160  │       │ Victron BMV-700, │        │ W-Bus heater (Webasto)│
- │ (OBD/PRO)│        │ → gpsd*  │       │ MPPT, DC-DC,     │        │ INA228 load sensors   │
- └────┬─────┘        └────┬─────┘       │ shore charger    │        └──────────┬────────────┘
+ │ WiCAN    │        │ XGPS160  │       │ Victron BMV-712, │        │ W-Bus heater (Webasto)│
+ │ (OBD/PRO)│        │ → gpsd*  │       │ SmartSolar MPPT, │        │ INA228 load sensors   │
+ └────┬─────┘        └────┬─────┘       │ Orion DC-DC      │        └──────────┬────────────┘
       │ MQTT              │ TCP 2947    └───┬──────────────┘                   │ MQTT
-      ▼                   ▼                 │ VE.Direct / HA BLE               ▼
+      ▼                   ▼                 │ Instant Readout → bigair         ▼
  ┌──────────────────────────────────────────┴──────────────────────────────────────────────────┐
  │ Raspberry Pi (Pi OS, Docker Compose, van Wi-Fi, no internet required)                       │
  │                                                                                             │
@@ -79,13 +79,14 @@ Principles:
 
 - **MQTT is the backbone.** Every source publishes to Mosquitto; every
   consumer subscribes. ESPHome telemetry nodes publish to MQTT directly
-  (Decision #23). Only devices HA alone can talk to (Victron BLE) are pushed
-  to MQTT with `mqtt_statestream`. The dash display fetches a frame from
+  (Decision #23). bigair decodes the Victron devices' BLE broadcasts itself
+  (Decision #45). The dash display fetches a frame from
   bigair's display server (Decision #29).
 - **bigair is the single InfluxDB writer.** HA's InfluxDB integration is not
   used — its entity-shaped schema would fight ours. One writer, one schema.
 - **Hardware isolation.** Only edge modules (`mqtt_io.py`, `influx_io.py`,
-  `gps_logger.py`'s gpsd client) touch the network or devices, and only
+  `gps_logger.py`'s gpsd client, `google_io.py`, `eia_io.py`, `weather_io.py`, `victron_io.py`,
+  `planner_server.py`) touch the network or devices, and only
   `main.py` imports them. Logic modules (`fuel_model.py`, `fill_detect.py`,
   `heater.py`) take and return frozen dataclasses from `signals.py`, so they
   test without hardware.
@@ -129,8 +130,27 @@ src/bigair/          # all Python; one small module per concern
   state_file.py      #   atomic, fsync'd state file (fuel model's durable state)
   fill_detect.py     #   fill-up detection state machine (Critical)
   heater.py          #   Webasto fuel accounting (Critical)
+  fuel_plan.py       #   fuel-stop planner: where/how much to fill on a route
+  fuel_sources.py    #   route/station/price-trend decoders for the planner
+  google_io.py / eia_io.py   # edges: Google Routes + Places, EIA prices (#71)
+  route_weather.py   #   weather along the route: sampling, conditions at ETA (#75)
+  trip_service.py    #   whole trip plan (fuel + weather) for CLI and planner page
+  planner_server.py  #   edge: trip planner page + API, port 8092 (#75)
+  weather_io.py      #   edge: Open-Meteo forecasts, NWS alerts
   gps_logger.py      #   gpsd TPV → GpsFix, track-point cadence
   gpsd_io.py         #   edge: gpsd JSON client
+  poi.py / poi_near.py  # vault POI notes → Poi; POIs in reach of a planned route (#88)
+  travel_rules.py / day_plan.py  # slow mode: rules, day budget, POI score, proposal (#90)
+  destinations.py / dest_sources.py  # where next: candidates, ranking; iOverlander + public land (#91)
+  chain.py           #   rough chain of legs and stays to a far goal (#92)
+  byways.py          #   scenic byway miles on a route; most scenic alternative (#100)
+  claude_agent.py    #   Claude tool loop, spend ledger, proposals (#89)
+  claude_tools.py / claude_service.py / claude_io.py  # planner tools + state; SDK edge
+  telemetry.py / influxql_io.py  # ask the van: read-only InfluxQL checks; briefing schedule (#94)
+  victron_ble.py     #   Victron Instant Readout decoder: AES-CTR + bit layouts (#109)
+  victron_io.py      #   edge: BLE advertisements via bleak / BlueZ D-Bus (#109)
+  electrical.py      #   latest Victron reading per device → MQTT state, Influx points (#109)
+  energy.py          #   daily Wh by source and load, integrated on monotonic time (#113)
   mqtt_io.py / influx_io.py   # edges (M1)
   main.py            #   wiring only
 tests/               # pytest, runs anywhere, no hardware
@@ -138,6 +158,8 @@ tests/fixtures/      # synthetic data with known-good answers (never real drives
 homeassistant/       # HA config: configuration.yaml + packages/*.yaml
 grafana/provisioning/  # datasources/ and dashboards/*.json
 deploy/              # docker-compose.yml, bootstrap.sh (Pi setup), host/ (systemd + gpsd config), mosquitto.conf, .env.example
+                     #   mac/: planner copy + HA/Grafana relays on a Mac over Tailscale (#105)
+                     #   backup.sh: nightly restic snapshot; the Mac pulls it (#111, docs/backup.md)
 docs/                # pid-register.md, carplay.md, hardware notes; docs/archive/ dated
 .claude/skills/      # domain skills (see Claude Code specifics)
 ```
@@ -150,11 +172,14 @@ uv run pytest                                   # all tests + coverage
 uv run ruff check . && uv run ruff format --check . && uv run mypy src/
 uv run yamllint homeassistant grafana deploy .github   # config lint
 uv run bigair display --port 8090               # dash gauge server (preview: /api/display.png)
+uv run bigair fuel-plan trip.json --tank-gal 40 --mpg 15   # fuel stops per reserve depth (docs/fuel-plan.md)
+uv run bigair planner --port 8092                # trip planner page: fuel stops + weather on a map
 docker compose -f deploy/docker-compose.yml config   # validate the stack
 uvx --from shellcheck-py shellcheck -x deploy/*.sh   # lint shell scripts
 
 # On the Pi (docs/hardware/pi-setup.md):
 ./deploy/bootstrap.sh       # idempotent install, secrets, start + provision the stack
+sudo ./deploy/backup.sh     # run tonight's backup now (docs/backup.md)
 ```
 
 All checks (tests, ruff check, ruff format, mypy, yamllint) must pass
@@ -176,15 +201,16 @@ tag with trip IDs, prices, coordinates or free text.
 
 | Measurement | Bucket | Tags | Key fields |
 |---|---|---|---|
-| `engine` | raw | `source` (wican) | `rpm`, `coolant_temp_c`, `intake_air_temp_c`, `maf_g_s`, `faer_ratio`, `engine_load_pct`, `boost_kpa`, `fuel_rate_lph` |
-| `vehicle` | raw | `source` | `speed_mph`, `odometer_mi`, `battery_v` |
+| `engine` | raw | `source` (wican) | `rpm`, `coolant_temp_c`, `oil_temp_c`, `intake_air_temp_c`, `maf_g_s`, `faer_ratio`, `engine_load_pct`, `boost_kpa`, `fuel_rate_lph` |
+| `vehicle` | raw | `source` | `speed_mph`, `odometer_mi`, `battery_v`, `ambient_temp_c` |
 | `driver` | raw | `source` (wican, can) | `throttle_pct`, `cruise_active`, `cruise_set_mph`, `brake_active` |
 | `fuel` | raw | `method` (fuel_rate, maf_faer, maf_fixed) | `tank_gal`, `engine_used_gal`, `heater_used_gal`, `range_mi`, `mpg_rolling`, `mpg_instant_30s`, `fuel_rate_gph`, `stale`, `calibrating` |
 | `heater` | raw | `method` (wbus_pulses, runtime_datasheet, current) | `running`, `power_level`, `pump_hz`, `fuel_gph`, `used_gal` |
-| `electrical` | raw | `device` (bmv700, mppt, dcdc, shore) | `voltage_v`, `current_a`, `power_w`, `soc_pct` |
+| `electrical` | raw | `device` (bmv, mppt, dcdc, house) | `voltage_v`, `current_a`, `power_w`, `soc_pct`, `consumed_ah`, `time_to_go_s`, `alarm`, `aux_voltage_v`, `midpoint_voltage_v`, `temperature_c` (bmv); `pv_power_w`, `yield_today_wh`, `load_current_a` (mppt); `input_voltage_v`, `off_reason` (dcdc); `state`, `charger_error` (mppt, dcdc); `loads_w`, `alternator_w`, `estimated` (house: bigair's derived flows, #113) |
 | `load` | raw | `circuit` (fan, webasto, lights, internet, inverter, pi) | `current_a`, `voltage_v`, `power_w` |
-| `track` | history | `source` (gps_bt) | `lat`, `lon`, `alt_m`, `speed_mph`, `heading_deg`, `mpg_30s`, `hdop`, `trip_id` |
+| `track` | history | `source` (gps_bt) | `lat`, `lon`, `alt_m`, `speed_mph`, `heading_deg`, `mpg_30s`, `grade_pct`, `hdop`, `trip_id` |
 | `fill_up` | history | `source` (live, manual, historical), `fill_type` (full, partial), `status` (confirmed, pending, skipped) | `gallons`, `price_per_gal`, `total_cost`, `odometer_mi`, `lat`, `lon`, `tank_before_gal`, `tank_after_gal`, `mpg_since_full`, `fill_id` |
+| `energy` | history | — | `solar_wh`, `alternator_wh`, `battery_in_wh`, `battery_out_wh`, `loads_wh`, `estimated_wh`: one point per local day, stamped at local midnight, rewritten as the day's running total (#113) |
 | `trip` | history | — | `distance_mi`, `fuel_gal`, `mpg`, `duration_s`, `idle_s`, `cruise_share`, `brake_events`, `trip_id` |
 
 Adding a signal: `/influx-schema` (update this table in the same PR).
@@ -471,13 +497,125 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     position). **HA ignores discovery `object_id`**: entity ids come from the device
     and entity names (`sensor.bigair_van_fuel_tank`), so renaming a discovered
     entity breaks the dashboard; `tests/test_ha_dashboard.py` catches it.
-40. **2026-11-22 — Van LED strip via HA's TP-Link integration** (Dan's request,
-    #68). The strip is a Tapo L930 on the `bigair` Wi-Fi. HA's built-in
-    `tplink` integration controls it over the LAN, so it keeps working offline.
-    It's config-entry only, so it's added in the UI like MQTT, and
-    `configuration.yaml` carries a note instead of a key (amends #27's "name the
-    feature" rule for UI-only integrations). The TP-Link account login is asked
-    once for the strip's local authentication and lives in HA's `.storage`,
-    never in git. HA has no `dhcp` discovery, so the strip has a DHCP
-    reservation on the GL.iNet router. Lighting is HA-only: no bigair or Influx
+40. **2026-11-23 — The fuel-stop planner takes a trip file and compares reserve
+    depths** (Dan's request, #70). P1 reads a JSON trip file (route miles plus
+    stations with mile markers and prices) rather than GPX. Projecting stations
+    onto a GPX route needs the routing and places APIs, so it moves to #71. Every
+    run prints one plan per reserve depth (default 150/100/75/50 mi) next to a
+    "fill at 1/4" baseline, so Dan chooses how deep into the reserve to go. While
+    calibrating, plans use `mpg × 0.93`. Stale fuel data refuses to plan.
+41. **2026-11-23 — Live fuel-plan sources** (#71; Dan approved a billed Google
+    key). Google Routes + Places API (New) search-along-route supply the route
+    and the posted diesel prices (`fuelOptions`). EIA weekly `EPD2D` supplies the
+    trend: `SCA` for California, `R5XCA` for the rest of the West Coast (WA and OR
+    have no series), capped at ±2¢/day. Dan is an **Open Roads** member, so
+    Love's, TA and Petro are priced at posted −$0.30 by default (the low end of
+    the reported 30–50¢). It's a planning estimate, not the pump price. The
+    planner is a CLI on the Mac for now; it reads the tank over Tailscale MQTT.
+    The van runs it in #72.
+42. **2026-11-24 — The trip planner runs on the Pi as one web page, embedded in HA**
+    (Dan's request, #75). `bigair planner` (port 8092, host networking) serves the
+    page and its API. The Companion app shows the same page in a Van-dashboard
+    "Trip" view, so there's one interface rather than an HA-native copy. Weather
+    along the route comes from Open-Meteo (free, no key, 16 days hourly, about every
+    25 mi) and NWS alerts (generic User-Agent, no contact details). The browser
+    re-times the weather for any departure without a new request; classification
+    thresholds come from `route_weather.CLASSIFY`. The page has no login because
+    it's reachable only on the van LAN and the tailnet. Paid plans are limited to
+    one at a time and `PLANNER_DAILY_LIMIT` a day, with the Google spend cap as the
+    backstop. Missing weather or alerts only add a warning; a missing route or fuel
+    state, or stale fuel data, means no plan. Tests block outbound connections
+    (`tests/conftest.py`).
+40. **2026-11-25 — Vault POIs reach the Pi by Syncthing, read-only** (Dan's choice,
+    #88). The trip planner reads Dan's road-trip POI notes (Obsidian frontmatter:
+    `location`, `tags`, plus optional `visit_min`, `visit_what`, `best_months`,
+    `destination` and `rating`). Syncthing sends only that folder one way, from the
+    Mac (Send Only) into gitignored `data/poi` on the Pi (Receive Only), and the
+    planner mounts it read-only. The notes are personal, so they never go in git,
+    and tests use synthetic POIs. The reach selector (round-trip detour / each way /
+    ahead) is Dan's to set on the page. The detour is twice the one-way drive from
+    the nearest route point, which errs long. A missing visit time or failed lookup
+    shows "unknown" and is never guessed. **300 mi/day is a ceiling, never a
+    target** (Dan): the scenic planner (#90–#92) must never score longer days higher.
+41. **2026-11-25 — Claude advises, Python decides** (Dan's interview, #89). bigair calls
+    Claude (`claude-opus-5-5`, effort medium, server-side refusal fallback) through
+    a hand-written tool loop on the Pi, so its spend cap can stop the loop between
+    calls. The tools are local and read-only, apart from `propose_route`, which only
+    records a suggestion; Dan accepts or dismisses it on the page. Claude never
+    changes a plan or estimates fuel. It may see POI notes, plans, the GPS position,
+    the forecast and (C3) telemetry, but never Dan's personal planning notes; the
+    travel rules come from bigair's settings. Offline, it shows "offline" and the
+    planner works without it. The spend cap is $25/month (`CLAUDE_MONTHLY_CAP_USD`,
+    kept durably in `data/bigair/claude-spend.json`), backed by the Console spend
+    limit. Showing spend in HA/Grafana is deferred until a bigair service owns it
+    (single Influx writer); the planner page shows it for now.
+42. **2026-11-25 — A Mac can stand in for the phone's path to the Pi** (Dan's request,
+    #105). While the phone is the van router's hotspot uplink, it can't reach the Pi
+    over Tailscale (#104). `deploy/mac/setup.sh` runs a second `bigair planner` on a
+    Mac, listening on the Mac's tailnet address only and reading the tank from the
+    Pi's Mosquitto. It also runs byte relays to the Pi's HA (8123) and Grafana (3000).
+    The Pi stays the only writer and the only HA. The Mac copy has no GPS position,
+    sends no briefing, and keeps its own plan and Claude spend counters (cap $5). The
+    relays are stdlib Python, not socat, because the macOS firewall already allows
+    uv's Python (`docs/hardware/mac-copy.md`). Like Decision #30, nothing depends on it.
+43. **2026-11-25 — Home Assistant is public through the Mac's Funnel; nothing else
+    is** (Dan's request, #105). Someone off the tailnet reaches HA at the Mac's
+    `ts.net` URL, with HA's login (per-person non-admin users, 2FA) as the gate and a
+    5-attempt IP ban. The planner and Grafana have no login, so they stay
+    tailnet-only. HA 2026.11 keeps `http:` settings (trusted proxy, ban) in
+    `.storage/http`, which git doesn't hold, so the steps live in
+    `docs/hardware/mac-copy.md`. If the Pi exposes HA itself later, HelmLog's
+    pattern applies (`docs/https-deployment.md` there): Cloudflare Tunnel with Access
+    for anything that has no login.
+44. **2026-11-26 — The fuel model measures time on the monotonic clock** (#107). A cold
+    boot started the Pi's clock 6.55 days behind (the Pi 5's RTC has no battery, and
+    chrony doesn't keep timesyncd's clock file). When chrony stepped it at the GPS fix
+    while the van was moving, the gap estimate (speed × wall-clock Δt ÷ mpg) booked
+    about 169 gal, and the tank showed −129 gal. Now the edge stamps
+    `time.monotonic()` on each `ObdSample` and the integrator uses only that for Δt
+    and ordering. No gap over an hour is estimated. The bootstrap installs
+    `fake-hwclock`, so a cold boot starts near the last shutdown. An RTC battery
+    would close the rest. Amends Decision #24: Influx writes already waited for sync,
+    but the fuel model didn't need to wait, it needed a clock that never steps.
+45. **2026-11-26 — bigair decodes the Victron devices' BLE broadcasts** (#109;
+    supersedes the Victron parts of Decisions #4 and #23 and of M3's plan). The
+    battery monitor is a **BMV-712 Smart** with built-in Bluetooth, not the BMV-700 over
+    VE.Direct that was assumed. With the SmartSolar MPPT 100/30 and the Orion-Tr Smart
+    12/12-30, it sends Victron's encrypted Instant Readout. `victron_io.py` (bleak, the
+    host's BlueZ over the read-only `/run/dbus` mount) passes the broadcasts to
+    `victron_ble.py`, which decodes them to Victron's published layout. HA's Bluetooth stays
+    off, so the XGPS160 keeps the radio's attention and there's no `mqtt_statestream`.
+    Readings go to `bigair/electrical/state` for HA, and to `electrical` in Influx every
+    10 s per device. A device silent for 2 min reads as unknown. Keys live only in
+    `deploy/.env` (`VICTRON_<NAME>_MAC`/`_KEY`).
+46. **2026-11-26 — Nightly encrypted backups, pulled to the Mac** (Dan's choice, #111).
+    `deploy/backup.sh` runs on `bigair-backup.timer` at 03:30, `Persistent` so a night
+    with the van off runs at the next boot. It stages InfluxDB (`influx backup`), the HA
+    and Grafana SQLite databases (online backup API), HA `.storage` and secrets, bigair's
+    state files and `deploy/.env`. It then keeps them in a local restic repo (7 daily, 4
+    weekly, 6 monthly; `restic check` every night). The Mac's `com.bigair.backup-pull`
+    rsyncs the encrypted repo hourly, and only when the Pi's `status.json` says the last
+    run checked OK. `RESTIC_PASSWORD` is in both env files, and it belongs in Dan's
+    password manager too. Restore steps: `docs/backup.md`.
+47. **2026-11-26 — Energy is integrated in bigair; loads are derived until the load node
+    lands** (#113). `energy.py` turns the Victron flows into Wh per local day on
+    monotonic time, never across a gap over 120 s (Grafana's `integral()` would
+    bridge an overnight outage). Loads = solar − battery net while the alternator
+    charger is off. While the Orion charges, its record has no current, so loads are
+    held and alternator = net − solar + loads, both flagged as estimates. Daily totals
+    go to `energy` in van_history: one point per local day, stamped at local midnight
+    and rewritten as it grows. Grafana `bigair-energy` shows them.
+48. **2026-11-27 — Van LED strip via HA's TP-Link integration, into HomeKit** (Dan's
+    request, #68; first drafted 2026-11-22). The strip is a Tapo L930 on the `bigair`
+    Wi-Fi (seen at 192.168.8.178). HA's built-in `tplink` integration controls it over
+    the LAN, so it keeps working offline. That integration is config-entry only, so it's
+    added in the UI like MQTT: `configuration.yaml` carries a note, and the TP-Link
+    account login it asks for once (for the strip's local KLAP auth) lives in HA's
+    `.storage`, never in git. HA has no `dhcp` discovery, so the strip needs a DHCP
+    reservation on the GL.iNet router. **HomeKit:** HA's HomeKit Bridge (`homekit:`,
+    bridge "BigAir", filtered to the `light` domain) publishes it to Apple Home, Siri
+    and Control Center. That brings in `zeroconf` for mDNS (amends #27: it may suggest
+    discovered devices, which are ignored). HomeKit control is local: the phone must be on
+    the van Wi-Fi (there's no Apple home hub in the van). So it doesn't work while the
+    phone is the router's hotspot uplink (#104). Lighting is HA-only: no bigair or Influx
     involvement.

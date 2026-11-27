@@ -29,7 +29,7 @@ FieldValue = float | int | bool | str | None
 
 RAW_BUCKET = "van_raw"
 HISTORY_BUCKET = "van_history"
-HISTORY_MEASUREMENTS = frozenset({"track", "fill_up", "trip"})
+HISTORY_MEASUREMENTS = frozenset({"track", "fill_up", "trip", "energy"})
 
 
 @dataclass(frozen=True)
@@ -95,7 +95,12 @@ def to_line(p: Point) -> str:
 # --- mappers: dataclass → Point (field names must be in the Data model table) ---
 
 
-def track_point(fix: GpsFix, mpg_30s: float | None = None, trip_id: str | None = None) -> Point:
+def track_point(
+    fix: GpsFix,
+    mpg_30s: float | None = None,
+    trip_id: str | None = None,
+    grade_pct: float | None = None,
+) -> Point:
     return Point(
         "track",
         fix.ts,
@@ -108,6 +113,7 @@ def track_point(fix: GpsFix, mpg_30s: float | None = None, trip_id: str | None =
             "heading_deg": fix.heading_deg,
             "hdop": fix.hdop,
             "mpg_30s": mpg_30s,
+            "grade_pct": None if grade_pct is None else round(grade_pct, 2),
             "trip_id": trip_id,
         },
     )
@@ -122,7 +128,20 @@ def vehicle_point(sample: ObdSample) -> Point:
             "speed_mph": sample.speed_mph,
             "odometer_mi": sample.odometer_mi,
             "battery_v": sample.battery_v,
+            "ambient_temp_c": sample.ambient_temp_c,
         },
+    )
+
+
+def engine_point(sample: ObdSample) -> Point | None:
+    """Engine temperatures (#79), or None on rounds that didn't poll them."""
+    if sample.coolant_temp_c is None and sample.oil_temp_c is None:
+        return None
+    return Point(
+        "engine",
+        sample.ts,
+        tags={"source": "wican"},
+        fields={"coolant_temp_c": sample.coolant_temp_c, "oil_temp_c": sample.oil_temp_c},
     )
 
 

@@ -61,9 +61,14 @@ preflight() {
 }
 
 install_packages() {
-  log "Packages: git, jq, chrony, openssl, curl"
+  log "Packages: git, jq, chrony, fake-hwclock, restic, openssl, curl"
   sudo apt-get update -qq
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git jq chrony openssl curl ca-certificates
+  # fake-hwclock (#107): the Pi 5's RTC has no battery and chrony doesn't keep
+  # timesyncd's clock file, so after a power-off the clock booted days behind until
+  # the GPS fix. fake-hwclock saves the time hourly and at shutdown and restores it
+  # early in boot, so a cold boot starts at most an hour (or one power-off) behind.
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git jq chrony fake-hwclock \
+    restic openssl curl ca-certificates
 
   if command -v docker >/dev/null && sudo docker compose version >/dev/null 2>&1; then
     echo "Docker already installed: $(sudo docker --version)"
@@ -111,6 +116,12 @@ secrets() {
     echo "Created deploy/.env with fresh secrets (not printed)."
   else
     echo "deploy/.env exists — keeping it."
+  fi
+  # Nightly backups (#111): restic's repo password. Also kept on the Mac (deploy/.env.mac)
+  # so a backup can be restored without the Pi.
+  if [[ -z "$(env_get RESTIC_PASSWORD)" ]]; then
+    env_set RESTIC_PASSWORD "$(rand_pass)"
+    echo "Generated RESTIC_PASSWORD for backups (not printed)."
   fi
   local ha="$REPO/homeassistant/secrets.yaml"
   if [[ ! -f "$ha" ]]; then
@@ -208,9 +219,63 @@ tailscale_host() {
   fi
 }
 
+# Vault POIs for the trip planner (#88). Syncthing receives Dan's POI folder from the
+# Mac, one way, into POI_HOST_DIR; the planner mounts it read-only. Pairing the two
+# devices is a one-time manual step (docs/hardware/syncthing-poi.md).
+syncthing_host() {
+  log "Syncthing for vault POIs (#88)"
+  local dir
+  dir="$(env_get POI_HOST_DIR)"
+  dir="${dir:-../data/poi}"
+  [[ "$dir" = /* ]] || dir="$DEPLOY/$dir"
+  mkdir -p "$dir"
+  if [[ "$(env_get SYNCTHING_ENABLE)" != "true" ]]; then
+    echo "SYNCTHING_ENABLE is not true in deploy/.env — skipping (POI folder: $dir)."
+    return
+  fi
+  if ! command -v syncthing >/dev/null; then
+    # Without --no-install-recommends apt pulls ~400 MB of desktop extras (seen on the Pi).
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends syncthing \
+      >/dev/null
+  fi
+  sudo systemctl enable --now "syncthing@$USER" >/dev/null 2>&1
+  echo "Syncthing running as $USER (web UI on this Pi's localhost:8384)."
+  echo "POI folder: $(cd "$dir" && pwd) — share it from the Mac as Send Only, accept here as Receive Only."
+}
+
+# Claude Code on the Pi (#89), for SSH sessions over Tailscale. Optional. Anthropic's
+# native installer puts `claude` in ~/.local/bin; logging in is interactive (run
+# `claude` once and follow the link). bigair's own Claude features use
+# ANTHROPIC_API_KEY instead and don't need this.
+claude_code_host() {
+  log "Claude Code (#89)"
+  if [[ "$(env_get CLAUDE_CODE_ENABLE)" != "true" ]]; then
+    echo "CLAUDE_CODE_ENABLE is not true in deploy/.env — skipping."
+    return
+  fi
+  if [[ -x "$HOME/.local/bin/claude" ]] || command -v claude >/dev/null; then
+    echo "Claude Code already installed."
+  else
+    curl -fsSL https://claude.ai/install.sh | bash
+  fi
+  echo "Log in once with: ~/.local/bin/claude   (then /login if it asks)"
+}
+
 # Dash preview (#62, Decision #37). The preview server has no key, so Compose
 # publishes it on 127.0.0.1 only and `tailscale serve` exposes it to the tailnet,
 # never the van LAN. `serve --bg` persists across reboots; re-running is a no-op.
+backup_host() {
+  log "Nightly backup timer (#111)"
+  local unit="/tmp/bigair-backup.service" changed=0
+  sed -e "s|@REPO@|$REPO|" "$DEPLOY/host/bigair-backup.service" >"$unit"
+  install_if_changed "$unit" /etc/systemd/system/bigair-backup.service && changed=1
+  install_if_changed "$DEPLOY/host/bigair-backup.timer" /etc/systemd/system/bigair-backup.timer \
+    && changed=1
+  [[ $changed == 1 ]] && sudo systemctl daemon-reload
+  sudo systemctl enable --now bigair-backup.timer >/dev/null 2>&1
+  echo "next backup: $(systemctl show bigair-backup.timer -p NextElapseUSecRealtime --value)"
+}
+
 tailscale_preview() {
   local port
   port="$(env_get DISPLAY_PREVIEW_PORT)"
@@ -388,9 +453,12 @@ docker_log_limits
 secrets
 gps_host
 tailscale_host
+syncthing_host
+claude_code_host
 start_core
 provision_influx
 start_grafana
 start_display
 start_bigair
+backup_host
 health

@@ -47,3 +47,19 @@ async def gpsd_fixes(
                 with contextlib.suppress(OSError):
                     await writer.wait_closed()
         await asyncio.sleep(retry_s)
+
+
+async def current_fix(
+    host: str = "127.0.0.1", port: int = 2947, timeout_s: float = 5.0
+) -> GpsFix | None:
+    """The next fix from gpsd, or None if there isn't one within ``timeout_s``."""
+    gen = gpsd_fixes(host, port)
+    try:
+        async with asyncio.timeout(timeout_s):
+            return await anext(gen)
+    except TimeoutError:
+        return None
+    finally:
+        aclose = getattr(gen, "aclose", None)  # an async generator; typed as an iterator
+        if aclose is not None:
+            await aclose()

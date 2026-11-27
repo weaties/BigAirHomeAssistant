@@ -127,7 +127,49 @@ services:
     volumes:
       - ../data/bigair:/data  # durable fuel state (Decision #22); gitignored
       - gauge-feed:/feed  # dash display copy (#17), not durable
+      # Victron BLE (#109): bleak reaches the host's BlueZ over the system D-Bus.
+      - /run/dbus:/run/dbus:ro
     stop_grace_period: 15s  # time to save state on SIGTERM
+
+  planner:
+    # Trip planner page (#75): fuel stops per reserve depth and weather along the
+    # route. Open it at http://bigair-ha.local:8092/ on the van Wi-Fi, from the
+    # HA "Trip" view, or over the tailnet. Planning needs internet; the last plan
+    # is cached for offline viewing. Plans are capped per day (Google costs money).
+    image: bigair:local
+    restart: unless-stopped
+    command: ["uv", "run", "--no-sync", "bigair", "planner"]
+    depends_on: [mosquitto]
+    env_file: .env  # GOOGLE_MAPS_API_KEY, EIA_API_KEY
+    # Host networking (Decision #35): the tank comes from Mosquitto on localhost and
+    # "current location" from gpsd, which listens on the host's localhost only.
+    network_mode: host
+    environment:
+      MQTT_HOST: localhost
+      PLANNER_PORT: 8092  # the healthcheck below assumes it
+      PLANNER_CACHE: /data/trip-plan.json
+      PLANNER_DAILY_LIMIT: ${PLANNER_DAILY_LIMIT:-20}
+      POI_DIR: /poi
+      TRAVEL_RULES: /data/travel-rules.yaml  # optional overrides (#90)
+      IOVERLANDER_DIR: /data/ioverlander  # Dan's iOverlander GPX exports (#91)
+      PUBLIC_LAND_FILE: /data/public-land.geojson  # BLM/USFS units (#91)
+      BYWAYS_FILE: /data/byways.geojson  # National Scenic Byways for slow mode (#100)
+      TZ: ${TZ}  # the evening briefing runs on local time (#94)
+      BRIEFING_TIME: ${BRIEFING_TIME:-19:00}
+      PLANNER_URL: ${PLANNER_URL:-http://bigair-ha.local:8092/}
+    volumes:
+      - ../data/bigair:/data  # cached last plan; gitignored
+      # Vault POI notes (#88), synced by Syncthing on the host; read-only here.
+      - ${POI_HOST_DIR:-../data/poi}:/poi:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   gauge-feed:  # bigair service → dash display (#17)

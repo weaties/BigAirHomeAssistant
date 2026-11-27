@@ -194,6 +194,109 @@ views:
               Charts and the mpg map: <a href="http://bigair-ha.local:3000/d/bigair-phone?kiosk"
               target="_blank">Grafana phone dashboard</a> (van Wi-Fi).
 
+      # House electrical from the Victron devices over BLE (#109).
+      - type: grid
+        cards:
+          - type: heading
+            heading: House power
+            heading_style: title
+            icon: mdi:home-battery
+          - type: tile
+            entity: sensor.bigair_van_house_battery
+            name: House battery
+            color: green
+            features_position: bottom
+            features:
+              - type: trend-graph
+                hours_to_show: 24
+            grid_options:
+              columns: full
+          - type: tile
+            entity: sensor.bigair_van_house_power
+            name: Net power
+            color: amber
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_house_voltage
+            name: Voltage
+            color: amber
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_house_time_to_go
+            name: Time to go
+            icon: mdi:timer-sand
+            color: amber
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_solar_power
+            name: Solar
+            color: yellow
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_solar_today
+            name: Solar today
+            icon: mdi:solar-power-variant
+            color: yellow
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_solar_charger
+            name: Charger
+            color: yellow
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_house_loads
+            name: Loads
+            icon: mdi:lightning-bolt
+            color: purple
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_loads_today
+            name: Loads today
+            icon: mdi:counter
+            color: purple
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_battery_charged_today
+            name: Charged today
+            icon: mdi:battery-plus
+            color: green
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_alternator_charger
+            name: Alternator charger
+            color: blue
+            grid_options:
+              columns: 6
+          - type: tile
+            entity: sensor.bigair_van_starter_battery
+            name: Starter battery
+            color: blue
+            grid_options:
+              columns: 6
+          - type: markdown
+            text_only: true
+            content: >-
+              Power flows and Wh by day: <a href="http://bigair-ha.local:3000/d/bigair-energy?kiosk"
+              target="_blank">Grafana energy dashboard</a> (van Wi-Fi).
+
   # ---------------------------------------------------------------- Fill-up
   - title: Fill-up
     path: fill
@@ -370,3 +473,16 @@ views:
                 name: Ignition
             grid_options:
               columns: full
+
+  # ---------------------------------------------------------------- Trip
+  # The trip planner page served by bigair on the Pi (#75): fuel stops per
+  # reserve depth and the weather along the route. A webpage card can't use HA's
+  # own address, so it names the Pi by its mDNS name on the van Wi-Fi.
+  - title: Trip
+    path: trip
+    icon: mdi:map-marker-path
+    type: panel
+    cards:
+      - type: iframe
+        url: http://bigair-ha.local:8092/
+        aspect_ratio: 100%

@@ -7,9 +7,13 @@ requires-python = ">=3.12"
 license = { text = "AGPL-3.0-or-later" }
 dependencies = [
     "aiomqtt>=2.5.1",
+    "anthropic>=2.14.0",
+    "bleak>=1.0",
+    "cryptography>=44",
     "loguru>=0.8.0",
     "numpy>=2.5.5",
     "pillow>=13.0.0",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]
@@ -77,5 +81,6 @@ dev = [
     "pytest-asyncio>=1.5.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.5",
+    "types-pyyaml>=6.0.12.20261122",
     "yamllint>=1.38.0",
 ]

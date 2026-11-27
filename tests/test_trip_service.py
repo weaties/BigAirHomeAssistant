@@ -1,0 +1,474 @@
+"""Trip orchestration (#75) with every edge faked: no network."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
+
+import pytest
+
+from bigair.byways import ByWayIndex
+from bigair.fuel_sources import LiveFuel, encode_polyline
+from bigair.poi import Poi
+from bigair.poi_near import Reach
+from bigair.travel_rules import TravelRules
+from bigair.trip_service import (
+    TripEdges,
+    TripError,
+    TripRequest,
+    plan_trip,
+    pois_for_cached,
+    request_from_json,
+    result_to_json,
+    weather_summary,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+NOW = datetime(2026, 11, 24, 16, 0, tzinfo=UTC)
+FRESH = "2026-11-24T12:00:00Z"
+POLY = encode_polyline([(40.0 + i * 0.1, -120.0) for i in range(21)])  # ~138 mi straight
+
+
+def _route(*a: object) -> dict[str, Any]:
+    return {
+        "routes": [
+            {"distanceMeters": 321869, "duration": "14400s", "polyline": {"encodedPolyline": POLY}}
+        ]
+    }
+
+
+def _place(pid: str, name: str, lat: float, price: str) -> dict[str, Any]:
+    units, _, cents = price.partition(".")
+    return {
+        "id": pid,
+        "displayName": {"text": name},
+        "location": {"latitude": lat, "longitude": -120.0},
+        "formattedAddress": "1 Main St, Town, OR 97000, USA",
+        "fuelOptions": {
+            "fuelPrices": [
+                {
+                    "type": "DIESEL",
+                    "price": {"currencyCode": "USD", "units": units, "nanos": int(cents) * 10**7},
+                    "updateTime": FRESH,
+                }
+            ]
+        },
+    }
+
+
+def _search(seg: object, tok: str | None, q: str, typ: str | None) -> dict[str, Any]:
+    return {
+        "places": [
+            _place("a", "Shell", 40.5, "6.10"),
+            _place("b", "Love's Travel Stop", 41.0, "6.40"),
+            _place("c", "Chevron", 41.5, "6.90"),
+        ]
+    }
+
+
+def _forecasts(points: list[tuple[float, float]]) -> list[dict[str, Any]]:
+    times = [(NOW + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M") for h in range(72)]
+    out = []
+    for lat, _ in points:
+        snowy = lat > 41.4
+        out.append(
+            {
+                "elevation": 1200.0,
+                "hourly": {
+                    "time": times,
+                    "temperature_2m": [-2.0 if snowy else 8.0] * 72,
+                    "precipitation_probability": [80 if snowy else 0] * 72,
+                    "precipitation": [1.0 if snowy else 0.0] * 72,
+                    "snowfall": [1.2 if snowy else 0.0] * 72,
+                    "weather_code": [73 if snowy else 1] * 72,
+                    "wind_speed_10m": [5.0] * 72,
+                    "wind_gusts_10m": [10.0] * 72,
+                },
+            }
+        )
+    return out
+
+
+def _alerts(lat: float, lon: float) -> dict[str, Any]:
+    if lat < 41.0:
+        return {"features": []}
+    return {
+        "features": [
+            {
+                "properties": {
+                    "id": "w1",
+                    "event": "Winter Storm Warning",
+                    "severity": "Severe",
+                    "headline": "Winter Storm Warning for the pass",
+                    "areaDesc": "Pass",
+                    "onset": "2026-11-24T18:00:00Z",
+                    "ends": "2026-11-25T18:00:00Z",
+                }
+            }
+        ]
+    }
+
+
+def _edges(**over: object) -> TripEdges:
+    base: dict[str, object] = {
+        "route": _route,
+        "search": _search,
+        "now": lambda: NOW,
+        "eia": lambda: {"response": {"data": []}},
+        "forecasts": _forecasts,
+        "alerts": _alerts,
+        "fuel_state": lambda: LiveFuel(30.0, 15.0, True, False, False),
+        "position": lambda: (47.6, -122.3),
+    }
+    base.update(over)
+    return TripEdges(**base)  # type: ignore[arg-type]
+
+
+def test_round_trip_plan_with_weather_and_alerts() -> None:
+    r = plan_trip(TripRequest("A", "B", round_trip=True, reserves=(100.0, 50.0)), _edges())
+    assert r.trip_mi == pytest.approx(2 * 200.0 + 20.0, abs=0.1)
+    assert r.inp.calibrating
+    assert r.inp.start_gal == 30.0
+    assert len(r.options) == 2
+    assert {p.leg for p in r.points} == {"out", "back"}
+    assert len(r.hourly) == len([p for p in r.points if p.leg == "out"])
+    assert [a.event for a in r.alerts] == ["Winter Storm Warning"]
+    assert r.return_depart == NOW + timedelta(hours=6)  # 4 h drive + 2 h default
+    lines = weather_summary(r)
+    assert lines[0].startswith("Out:")
+    assert "snow" in lines[0]
+    assert "worst: Snow" in lines[0]
+    assert lines[1].startswith("Back:")
+
+
+def test_json_is_serialisable_and_has_map_data() -> None:
+    r = plan_trip(TripRequest("A", "B", round_trip=True, reserves=(100.0,)), _edges())
+    j = result_to_json(r)
+    json.dumps(j)  # must not raise
+    assert j["route"]["polyline"]
+    stops = j["options"][0]["stops"]
+    assert stops and all(s["lat"] is not None for s in stops)
+    assert {s["leg"] for s in stops} <= {"out", "back"}
+    assert j["weather"]["series"][0]["start"] == NOW.isoformat()
+    assert j["weather"]["classify"]["severe_gust_mph"] == 45.0
+    assert j["tank"]["calibrating"] is True
+
+
+def test_current_location_uses_gps() -> None:
+    seen: list[str] = []
+
+    def route(o: str, d: str, via: list[str], avoid: bool, alt: bool) -> dict[str, Any]:
+        seen.append(o)
+        return _route()
+
+    plan_trip(TripRequest("here", "B"), _edges(route=route))
+    assert seen == ["47.60000,-122.30000"]
+
+
+def test_current_location_without_fix_is_an_error() -> None:
+    with pytest.raises(TripError, match="GPS"):
+        plan_trip(TripRequest("here", "B"), _edges(position=lambda: None))
+
+
+def test_stale_fuel_refuses() -> None:
+    with pytest.raises(TripError, match="stale"):
+        plan_trip(
+            TripRequest("A", "B"), _edges(fuel_state=lambda: LiveFuel(30, 15, False, True, False))
+        )
+
+
+def test_no_fuel_state_needs_overrides() -> None:
+    with pytest.raises(TripError, match="fuel state"):
+        plan_trip(TripRequest("A", "B"), _edges(fuel_state=lambda: None))
+    r = plan_trip(TripRequest("A", "B", tank_gal=40.0, mpg=14.0), _edges(fuel_state=lambda: None))
+    assert r.inp.start_gal == 40.0
+
+
+def test_no_route_is_an_error() -> None:
+    with pytest.raises(TripError, match="no route"):
+        plan_trip(TripRequest("A", "B"), _edges(route=lambda *a: {"routes": []}))
+
+
+def test_weather_failure_is_only_a_warning() -> None:
+    def boom(points: object) -> list[dict[str, Any]]:
+        raise OSError("offline")
+
+    r = plan_trip(TripRequest("A", "B"), _edges(forecasts=boom))
+    assert r.options[0].feasible
+    assert r.points == []
+    assert any("Weather unavailable" in w for w in r.warnings)
+
+
+def test_request_from_json_validates() -> None:
+    req = request_from_json(
+        {
+            "origin": "Seattle, WA",
+            "destination": "Sonoma Raceway",
+            "via": ["", "Bend, OR"],
+            "round_trip": True,
+            "depart": "2026-11-28T08:00:00-08:00",
+            "reserves": [150, "100"],
+            "tank_gal": "",
+        }
+    )
+    assert req.via == ("Bend, OR",)
+    assert req.depart == datetime(2026, 11, 28, 16, 0, tzinfo=UTC)
+    assert req.reserves == (150.0, 100.0)
+    assert req.tank_gal is None
+    with pytest.raises(TripError, match="start and a destination"):
+        request_from_json({"origin": "A"})
+    with pytest.raises(TripError, match="time zone"):
+        request_from_json({"origin": "A", "destination": "B", "depart": "2026-11-28T08:00"})
+    with pytest.raises(TripError, match="number"):
+        request_from_json({"origin": "A", "destination": "B", "reserves": ["x"]})
+
+
+# --- POIs near the route (#88) ---------------------------------------------------
+
+# The fake route runs due north along lon -120 from lat 40.0 to 42.0.
+NEAR = Poi("Near Springs", 41.0, -120.2, ("hot-springs",), "Warm.", 120, "Soak", (11, 12), True, 5)
+FAR = Poi("Far Peak", 41.0, -124.0, ("geology",), None)
+
+
+def _drive(origin: tuple[float, float], dest: tuple[float, float]) -> tuple[float, float]:
+    return 20 * 60.0, 15.0
+
+
+def _poi_edges(**over: object) -> TripEdges:
+    base: dict[str, object] = {"pois": lambda: ([NEAR, FAR], []), "drive_s": _drive}
+    base.update(over)
+    return _edges(**base)
+
+
+def test_plan_lists_pois_in_reach_with_detour_and_visit() -> None:
+    r = plan_trip(TripRequest("A", "B", reach=Reach("detour", 3.0)), _poi_edges())
+    assert r.pois_enabled
+    assert [h.poi.name for h in r.pois] == ["Near Springs"]
+    j = result_to_json(r)
+    json.dumps(j)
+    block = j["pois"]
+    assert block["enabled"] is True
+    assert block["reach"] == {"mode": "detour", "hours": 3.0}
+    hit = block["hits"][0]
+    assert hit["name"] == "Near Springs"
+    assert hit["detour_min"] == 40
+    assert hit["detour_mi"] == 30
+    assert hit["visit_min"] == 120
+    assert hit["visit_what"] == "Soak"
+    assert hit["status"] == "ok"
+    assert hit["in_season"] is True  # November
+    assert hit["rating"] == 5
+    assert hit["destination"] is True
+    assert hit["lat"] == 41.0
+    assert hit["eta"]
+
+
+def test_without_a_poi_folder_the_plan_has_no_poi_section() -> None:
+    r = plan_trip(TripRequest("A", "B"), _edges())
+    assert not r.pois_enabled
+    assert result_to_json(r)["pois"]["enabled"] is False
+
+
+def test_poi_folder_warnings_reach_the_plan() -> None:
+    edges = _poi_edges(pois=lambda: ([], ["POI folder /poi not found; is Syncthing running?"]))
+    r = plan_trip(TripRequest("A", "B"), edges)
+    assert r.options[0].feasible  # the fuel plan stands without POIs
+    assert "POI folder /poi not found; is Syncthing running?" in r.warnings
+
+
+def test_request_from_json_reads_the_reach_selector() -> None:
+    req = request_from_json(
+        {"origin": "A", "destination": "B", "reach": {"mode": "each_way", "hours": "2"}}
+    )
+    assert req.reach == Reach("each_way", 2.0)
+    assert request_from_json({"origin": "A", "destination": "B"}).reach == Reach("detour", 3.0)
+    with pytest.raises(TripError, match="reach"):
+        request_from_json({"origin": "A", "destination": "B", "reach": {"mode": "fly"}})
+
+
+def test_changing_the_reach_reuses_the_cached_route_without_replanning() -> None:
+    edges = _poi_edges()
+    last = result_to_json(plan_trip(TripRequest("A", "B", reach=Reach("detour", 0.5)), edges))
+    assert last["pois"]["hits"] == []  # 40 min round trip > 30 min
+
+    def no_route(*a: object) -> dict[str, Any]:
+        raise AssertionError("must not re-route")
+
+    block = pois_for_cached(last, Reach("detour", 1.0), _poi_edges(route=no_route))
+    assert [h["name"] for h in block["hits"]] == ["Near Springs"]
+    assert block["reach"] == {"mode": "detour", "hours": 1.0}
+
+
+# --- slow mode (#90) -------------------------------------------------------------
+
+PST = "-08:00"
+
+
+def _recording_route(
+    seen: list[bool],
+) -> Callable[[str, str, list[str], bool, bool], dict[str, Any]]:
+    def route(o: str, d: str, via: list[str], avoid: bool, alt: bool) -> dict[str, Any]:
+        seen.append(avoid)
+        return _route()
+
+    return route
+
+
+def test_quick_mode_takes_the_normal_route_slow_mode_avoids_highways() -> None:
+    seen: list[bool] = []
+    plan_trip(TripRequest("A", "B"), _poi_edges(route=_recording_route(seen)))
+    plan_trip(TripRequest("A", "B", mode="slow"), _poi_edges(route=_recording_route(seen)))
+    assert seen == [False, True]
+
+
+def test_slow_mode_budgets_the_day_and_proposes_stops() -> None:
+    depart = datetime.fromisoformat("2026-11-25T08:00:00" + PST)
+    r = plan_trip(TripRequest("A", "B", mode="slow", depart=depart), _poi_edges())
+    assert r.day is not None
+    assert r.day.budget.window_min == pytest.approx(420)  # 08:00 → 15:00
+    assert r.day.budget.end_reason == "arrive_by"
+    # 240 min of driving leaves 180; Near Springs is 40 detour + 120 visit = 160.
+    assert r.day.proposal.fits
+    assert r.day.proposal.chosen == ("Near Springs",)
+    j = result_to_json(r)
+    json.dumps(j)
+    day = j["day"]
+    assert day["mode"] == "slow"
+    assert day["window_min"] == 420
+    assert day["drive_min"] == 240
+    assert day["route_mi"] == 200
+    assert day["max_day_mi"] == 300
+    assert day["proposal"]["chosen"] == ["Near Springs"]
+    assert day["proposal"]["added_min"] == 160
+    hit = j["pois"]["hits"][0]
+    # 1 + 1.0 (★5) + 0.5 (November) - 0.25 (46°F at the ETA) = 2.25
+    assert hit["score"] == 2.25
+    assert "★5 (+1.0)" in hit["reasons"]
+
+
+def test_slow_mode_without_a_departure_leaves_at_ten_local() -> None:
+    r = plan_trip(TripRequest("A", "B", mode="slow", utc_offset_min=-480), _poi_edges())
+    # NOW is 08:00 PST, so today at 10:00 PST.
+    assert r.depart == datetime(2026, 11, 24, 18, 0, tzinfo=UTC)
+
+
+def test_slow_mode_after_ten_leaves_tomorrow_at_ten() -> None:
+    late = datetime(2026, 11, 25, 3, 0, tzinfo=UTC)  # 19:00 PST on the 24th
+    r = plan_trip(
+        TripRequest("A", "B", mode="slow", utc_offset_min=-480), _poi_edges(now=lambda: late)
+    )
+    assert r.depart == datetime(2026, 11, 25, 18, 0, tzinfo=UTC)
+
+
+def test_slow_leg_over_the_ceiling_says_so_and_proposes_nothing() -> None:
+    depart = datetime.fromisoformat("2026-11-25T08:00:00" + PST)
+    rules = TravelRules(max_day_mi=150.0)
+    r = plan_trip(TripRequest("A", "B", mode="slow", depart=depart), _poi_edges(), rules)
+    assert r.day is not None
+    assert not r.day.proposal.fits
+    assert r.day.proposal.problems == ("200 mi is over the 150 mi daily ceiling",)
+    assert r.options[0].feasible  # the fuel plan still stands
+
+
+def test_quick_mode_has_no_day_budget() -> None:
+    r = plan_trip(TripRequest("A", "B"), _poi_edges())
+    assert r.day is None
+    assert result_to_json(r)["day"] == {"mode": "quick"}
+
+
+def test_reach_change_recomputes_the_slow_proposal_from_the_cache() -> None:
+    depart = datetime.fromisoformat("2026-11-25T08:00:00" + PST)
+    edges = _poi_edges()
+    req = TripRequest("A", "B", mode="slow", depart=depart, reach=Reach("detour", 0.5))
+    last = result_to_json(plan_trip(req, edges))
+    assert last["day"]["proposal"]["chosen"] == []
+    block = pois_for_cached(last, Reach("detour", 1.0), edges)
+    assert block["proposal"]["chosen"] == ["Near Springs"]
+    assert block["hits"][0]["score"] == 2.25  # weather re-read from the cached plan
+
+
+def test_request_from_json_reads_mode_and_offset() -> None:
+    req = request_from_json(
+        {"origin": "A", "destination": "B", "mode": "slow", "utc_offset_min": -420}
+    )
+    assert (req.mode, req.utc_offset_min) == ("slow", -420)
+    assert request_from_json({"origin": "A", "destination": "B"}).mode == "quick"
+    with pytest.raises(TripError, match="mode"):
+        request_from_json({"origin": "A", "destination": "B", "mode": "warp"})
+
+
+def test_a_utc_departure_is_read_in_the_phones_time_zone() -> None:
+    # The page sends "…Z" (toISOString) plus its offset; 15:00 must mean 15:00 local.
+    req = request_from_json(
+        {
+            "origin": "A",
+            "destination": "B",
+            "mode": "slow",
+            "depart": "2026-11-25T17:00:00Z",  # 09:00 PST
+            "utc_offset_min": -480,
+        }
+    )
+    assert req.depart is not None
+    assert req.depart.utcoffset() == timedelta(hours=-8)
+    assert req.depart.hour == 9
+    r = plan_trip(req, _poi_edges())
+    assert r.day is not None
+    assert r.day.budget.window_min == pytest.approx(360)  # 09:00 → 15:00 PST
+
+
+# --- scenic byways in slow mode (#100) ---------------------------------------------
+
+POLY_EAST = encode_polyline([(40.0 + i * 0.1, -119.8) for i in range(21)])  # 10 mi east
+
+
+def _two_routes(
+    seen: list[tuple[bool, bool]],
+) -> Callable[[str, str, list[str], bool, bool], dict[str, Any]]:
+    def route(o: str, d: str, via: list[str], avoid: bool, alternatives: bool) -> dict[str, Any]:
+        seen.append((avoid, alternatives))
+        fast = {"distanceMeters": 300000, "duration": "13000s",
+                "polyline": {"encodedPolyline": POLY_EAST}}  # fmt: skip
+        scenic = {"distanceMeters": 321869, "duration": "14400s",
+                  "polyline": {"encodedPolyline": POLY}}  # fmt: skip
+        return {"routes": [fast, scenic] if alternatives else [fast]}
+
+    return route
+
+
+def _byway_index() -> ByWayIndex:
+    idx = ByWayIndex()
+    idx.add("Lake Byway", [(40.5, -120.0), (41.0, -120.0), (41.5, -120.0)])
+    return idx
+
+
+def test_slow_mode_picks_the_most_scenic_alternative_that_fits() -> None:
+    seen: list[tuple[bool, bool]] = []
+    depart = datetime.fromisoformat("2026-11-25T08:00:00" + PST)
+    edges = _poi_edges(route=_two_routes(seen), byways=_byway_index)
+    r = plan_trip(TripRequest("A", "B", mode="slow", depart=depart), edges)
+    assert seen == [(True, True)]
+    assert r.route.points[0] == pytest.approx((40.0, -120.0))  # the byway route, not the first
+    assert r.day is not None
+    assert r.day.byway_mi == pytest.approx(100.0, abs=10.0)  # 1° of the 200-road-mi route
+    assert "most scenic of 2" in r.day.route_why
+    day = result_to_json(r)["day"]
+    assert day["byways"]["miles"] > 60
+    assert "Lake Byway" in day["byways"]["why"]
+
+
+def test_quick_mode_and_via_points_ask_for_no_alternatives() -> None:
+    seen: list[tuple[bool, bool]] = []
+    edges = _poi_edges(route=_two_routes(seen), byways=_byway_index)
+    plan_trip(TripRequest("A", "B"), edges)
+    plan_trip(TripRequest("A", "B", mode="slow", via=("C",)), edges)
+    assert seen == [(False, False), (True, False)]
+
+
+def test_slow_mode_without_a_byways_file_keeps_googles_route() -> None:
+    seen: list[tuple[bool, bool]] = []
+    r = plan_trip(TripRequest("A", "B", mode="slow"), _poi_edges(route=_two_routes(seen)))
+    assert seen == [(True, False)]
+    assert r.day is not None and r.day.byway_mi is None

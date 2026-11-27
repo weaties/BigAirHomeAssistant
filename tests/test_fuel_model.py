@@ -239,3 +239,60 @@ def test_instant_mpg_window_follows_the_clock_after_ignition_off() -> None:
     _feed(m, _cruise(0, 60, 60.0, 4.0))
     _feed(m, [_s(61 + i, None, mph=0.0, ignition=False) for i in range(40)])
     assert m.mpg_instant_30s is None
+
+
+# --- Clock steps (#107) -------------------------------------------------------------
+# The Pi has no RTC: after a cold boot its wall clock can be days behind until chrony
+# steps it from GPS. Time between samples must come from the monotonic clock the edge
+# records (ObdSample.mono_s), never from the wall clock.
+
+
+def _m(sec: float, mono: float, gph: float, mph: float = 18.0) -> ObdSample:
+    return ObdSample(
+        ts=T0 + timedelta(seconds=sec),
+        ignition=True,
+        speed_mph=mph,
+        fuel_rate_gph=gph,
+        mono_s=mono,
+    )
+
+
+def test_a_forward_clock_step_while_driving_is_not_a_gap() -> None:
+    """The 2026-11-26 case: wall clock +566,034 s between two 1 s samples at 18 mph.
+
+    Measured on the monotonic clock it's 1 s at 3.6 gph = 0.001 gal, not
+    18 mph × 157 h ÷ 15 mpg ≈ 189 gal.
+    """
+    m = _model(prior_mpg=15.0)
+    _feed(m, [_m(0, 100.0, 3.6), _m(1, 101.0, 3.6), _m(1 + 566_034, 102.0, 3.6)])
+    assert m.state.gap_gal == 0.0
+    assert m.state.engine_used_gal == pytest.approx(3.6 * 2 / 3600, rel=1e-9)
+    assert m.state.miles_since_full == pytest.approx(18.0 * 2 / 3600, rel=1e-9)
+
+
+def test_a_backward_clock_step_does_not_stop_integration() -> None:
+    """Wall clock −1 h: the samples after it are new, not out of order."""
+    m = _model()
+    _feed(m, [_m(0, 100.0, 3.6), _m(-3600, 101.0, 3.6), _m(-3599, 102.0, 3.6)])
+    assert m.state.engine_used_gal == pytest.approx(3.6 * 2 / 3600, rel=1e-9)
+
+
+def test_repeated_monotonic_time_is_a_duplicate() -> None:
+    m = _model()
+    _feed(m, [_m(0, 100.0, 3.6), _m(5, 100.0, 3.6), _m(1, 101.0, 3.6)])
+    assert m.state.engine_used_gal == pytest.approx(3.6 / 3600, rel=1e-9)
+
+
+def test_a_real_gap_is_still_estimated_on_monotonic_time() -> None:
+    """60 s at 60 mph = 1 mi at the 15 mpg prior, whatever the wall clock did."""
+    m = _model(prior_mpg=15.0)
+    _feed(m, [_m(0, 100.0, 30.0, mph=60.0), _m(9_999, 160.0, 30.0, mph=60.0)])
+    assert m.state.gap_gal == pytest.approx(1 / 15, rel=1e-9)
+
+
+def test_a_gap_over_an_hour_is_not_estimated() -> None:
+    """Backstop: no gap estimate can exceed an hour of driving, whatever the clocks say."""
+    m = _model(prior_mpg=15.0)
+    _feed(m, [_s(0, 3.6, mph=60.0), _s(2 * 3600, 3.6, mph=60.0)])
+    assert m.state.gap_gal == 0.0
+    assert m.state.engine_used_gal == 0.0

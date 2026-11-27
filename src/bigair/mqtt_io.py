@@ -90,3 +90,23 @@ async def run_mqtt(
         except* aiomqtt.MqttError as eg:
             logger.warning("MQTT session ended: {}; retrying in {} s", eg.exceptions[0], retry_s)
         await asyncio.sleep(retry_s)
+
+
+async def publish_once(host: str, port: int, topic: str, payload: str) -> None:
+    """Connect, publish one message (QoS 1, not retained), disconnect (#94)."""
+    async with aiomqtt.Client(host, port) as client:
+        await client.publish(topic, payload, qos=1, retain=False)
+
+
+async def read_retained(host: str, port: int, topic: str, timeout_s: float = 5.0) -> bytes | None:
+    """One retained message from ``topic``, or None if nothing arrives in time."""
+    async with aiomqtt.Client(host, port) as client:
+        await client.subscribe(topic)
+        try:
+            async with asyncio.timeout(timeout_s):
+                async for msg in client.messages:
+                    payload = msg.payload
+                    return payload if isinstance(payload, bytes) else str(payload).encode()
+        except TimeoutError:
+            return None
+    return None

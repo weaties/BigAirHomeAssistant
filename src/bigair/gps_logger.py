@@ -3,10 +3,22 @@
 The gpsd client itself is the edge (`gpsd_io.py`). This module is pure: a
 TPV report in, a GpsFix out; the recorder keeps one fix every 5 s while
 moving and one a minute while parked, so a year of driving stays small.
+
+Road grade (#78) comes from GPS altitude over distance. Altitude from a
+consumer GPS is noisy (a few metres from fix to fix), so grade over 5 s is
+mostly noise: on real drives its 99th percentile was ±11 %. Measured over a
+400 m sliding window it falls within about ±5 % on Seattle hills. The window
+must also be covered within 60 s (about 15 mph): altitude drifts while the van
+crawls or stops, and on the Pi's history that drift pushed city grades to
+±18 % (#83). Grade is None, never a guess, until the window is covered, while
+parked or crawling, after a gap, without a 3D fix, or when the result is
+implausible for a road.
 """
 
 from __future__ import annotations
 
+import math
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -70,3 +82,64 @@ class TrackRecorder:
             self._last_ts = fix.ts
             self._last_moving = moving
         return due
+
+
+EARTH_R_M = 6_371_000.0
+
+
+def distance_m(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
+    """Great-circle (haversine) distance in metres."""
+    p1, p2 = math.radians(a_lat), math.radians(b_lat)
+    dp, dl = p2 - p1, math.radians(b_lon - a_lon)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * EARTH_R_M * math.asin(math.sqrt(h))
+
+
+class GradeEstimator:
+    """Road grade in percent over the last ``window_m`` metres driven."""
+
+    def __init__(
+        self,
+        window_m: float = 400.0,
+        step_m: float = 10.0,
+        max_gap: timedelta = timedelta(seconds=30),
+        max_abs_pct: float = 20.0,
+        max_span: timedelta = timedelta(seconds=60),
+    ) -> None:
+        self.window_m = window_m
+        self.step_m = step_m
+        self.max_gap = max_gap
+        self.max_abs_pct = max_abs_pct
+        self.max_span = max_span
+        self.distance_m = 0.0
+        self._last: GpsFix | None = None
+        self._hist: deque[tuple[float, float, datetime]] = deque()  # (distance_m, alt_m, ts)
+
+    def _reset(self) -> None:
+        self._last = None
+        self._hist.clear()
+
+    def update(self, fix: GpsFix) -> float | None:
+        """Feed every fix; returns the grade at this fix, or None."""
+        moving = (fix.speed_mph or 0.0) > MOVING_MPH
+        if fix.alt_m is None or (self._last is not None and fix.ts - self._last.ts > self.max_gap):
+            self._reset()
+        if fix.alt_m is None or not moving:
+            # Parked: GPS jitter would add phantom distance; resume from here.
+            if self._last is not None:
+                self._last = fix
+            return None
+        if self._last is not None:
+            self.distance_m += distance_m(self._last.lat, self._last.lon, fix.lat, fix.lon)
+        self._last = fix
+        if not self._hist or self.distance_m - self._hist[-1][0] >= self.step_m:
+            self._hist.append((self.distance_m, fix.alt_m, fix.ts))
+        # Keep one anchor at or beyond the window, drop anything older.
+        while len(self._hist) > 1 and self.distance_m - self._hist[1][0] >= self.window_m:
+            self._hist.popleft()
+        d0, a0, t0 = self._hist[0]
+        run = self.distance_m - d0
+        if run < self.window_m or fix.ts - t0 > self.max_span:
+            return None
+        grade = 100.0 * (fix.alt_m - a0) / run
+        return grade if abs(grade) <= self.max_abs_pct else None
