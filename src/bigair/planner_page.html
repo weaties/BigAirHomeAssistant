@@ -116,7 +116,7 @@
     <div class="row" style="margin-top:10px">
       <div class="chips" id="modechips" style="margin:0">
         <span class="chip on" data-mode="quick" title="Google's normal route">Get there quick</span>
-        <span class="chip" data-mode="slow" title="No interstates, ≤300 mi, in by 3pm before dark, best POIs proposed">Get there slow</span>
+        <span class="chip" data-mode="slow" title="No interstates, ≤300 mi a day, in by 3pm before dark. A far destination is laid out over several days, each ending somewhere worth exploring.">Get there slow</span>
       </div>
       <label class="row" style="margin:0;color:var(--ink);font-size:15px">
         <input type="checkbox" id="round_trip"> Round trip (same road home)
@@ -127,6 +127,19 @@
     <div class="status" id="status"></div>
   </form>
 
+  <div class="card hidden" id="tripcard">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Days to <span id="trip_goal"></span></h2>
+      <span class="row" style="margin:0">
+        <label for="trip_by" style="margin:0">Arrive by (optional)</label>
+        <input type="date" id="trip_by" style="width:auto">
+      </span>
+    </div>
+    <div class="status" id="tripstatus"></div>
+    <div class="scroll"><table id="trip"></table></div>
+    <div class="note">The days stretch or shrink so each night lands somewhere worth exploring: a spot with your POIs within 25 mi, or one of your destinations. A dull night is avoided even if it adds a day; then fewer days, then the richer stops. No day passes the daily ceiling or the arrive-by time. Miles and times are estimates; day 1 is planned for real below. Re-plan from wherever you are.</div>
+  </div>
+
   <div class="card" id="destcard">
     <div class="row" style="justify-content:space-between">
       <h2 style="margin:0">Where next? <small class="muted" style="font-weight:normal">a spot for the next few nights</small></h2>
@@ -134,15 +147,6 @@
     </div>
     <div class="status" id="deststatus"></div>
     <div class="scroll"><table id="dests"></table></div>
-    <div class="row" style="margin-top:10px">
-      <label for="goal" style="margin:0">Far goal</label>
-      <input type="text" id="goal" placeholder="Tucson, AZ" autocomplete="off" style="flex:1;min-width:140px;width:auto">
-      <label for="goal_by" style="margin:0">by</label>
-      <input type="date" id="goal_by" style="width:auto">
-      <button type="button" id="chain_go">Sketch the way</button>
-    </div>
-    <div class="status" id="chainstatus"></div>
-    <div class="scroll"><table id="chain"></table></div>
   </div>
 
   <div class="card hidden" id="chatcard">
@@ -262,7 +266,7 @@ const picked = new Set();  // POI names ticked in the list
 let mode = "quick", departAuto = true;
 
 // ---------- form ----------
-const FIELDS = ["origin", "destination", "via", "reserves", "reach_mode", "reach_hours", "goal", "goal_by"];
+const FIELDS = ["origin", "destination", "via", "reserves", "reach_mode", "reach_hours", "trip_by"];
 function nextHour() { const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); return d; }
 function setMode(m) {
   mode = m === "slow" ? "slow" : "quick";
@@ -310,8 +314,20 @@ $("form").addEventListener("submit", async (ev) => {
     mode, utc_offset_min: -new Date().getTimezoneOffset(),
   };
   $("go").disabled = true;
-  $("status").textContent = "Planning… this takes about 15 seconds.";
   try {
+    // Slow mode to a far destination: lay out the days, then plan day 1 in detail.
+    if (mode === "slow" && !body.via.length && !body.round_trip) {
+      $("status").textContent = "Laying out the days…";
+      const t = await layOutDays(body.origin, body.destination, body.depart);
+      if (t.legs.length > 1) {
+        body.destination = `${t.legs[0].lat},${t.legs[0].lon}`;
+        $("status").textContent = `Day 1 of ${t.legs.length}: planning the drive to ${t.legs[0].name}…`;
+      } else {
+        $("status").textContent = "Planning… this takes about 15 seconds.";
+      }
+    } else {
+      $("status").textContent = "Planning… this takes about 15 seconds.";
+    }
     const r = await fetch("api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
@@ -633,46 +649,70 @@ fetch("api/claude/briefing").then((r) => (r.ok ? r.json() : null)).then((b) => {
 }).catch(() => {});
 fetch("api/claude/proposals").then((r) => (r.ok ? r.json() : [])).then(renderProposals).catch(() => {});
 
-// ---------- a chain of legs to a far goal (#92) ----------
-async function sketchChain() {
-  saveForm();
-  if (!$("origin").value || !$("goal").value || !$("goal_by").value) {
-    $("chainstatus").textContent = "Fill in From, a far goal and the date to be there by."; return;
-  }
-  $("chain_go").disabled = true;
-  $("chainstatus").textContent = "Sketching…";
+// ---------- slow mode's days to a far destination (#117) ----------
+let trip = null;  // { origin, goal, depart, layovers, j }
+try { trip = JSON.parse(store.get("planner.trip") || "null"); } catch { trip = null; }
+async function postChain(t) {
+  const body = { origin: t.origin, goal: t.goal, depart: t.depart, layovers: t.layovers,
+                 by: $("trip_by").value || null, utc_offset_min: -new Date().getTimezoneOffset() };
+  const r = await fetch("api/chain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+async function layOutDays(origin, goal, depart) {
+  // Same trip: keep the layovers. New origin or goal: start again at 0.
+  const same = trip && trip.origin === origin && trip.goal === goal;
+  const t = { origin, goal, depart, layovers: same ? trip.layovers : [] };
+  t.j = await postChain(t);
+  if (t.j.legs.length > 1) { trip = t; store.set("planner.trip", JSON.stringify(trip)); }
+  else { trip = null; store.set("planner.trip", "null"); }
+  renderTrip();
+  return t.j;
+}
+async function changeLayover(i, v) {
+  if (!trip) return;
+  const n = Math.max(0, Math.min(30, Math.round(Number(v) || 0)));
+  while (trip.layovers.length <= i) trip.layovers.push(0);
+  trip.layovers[i] = n;
+  $("tripstatus").textContent = "Re-planning the days…";
   try {
-    const body = { origin: $("origin").value, goal: $("goal").value, by: $("goal_by").value, utc_offset_min: -new Date().getTimezoneOffset() };
-    const r = await fetch("api/chain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
-    renderChain(j);
+    trip.j = await postChain(trip);
+    store.set("planner.trip", JSON.stringify(trip));
+    renderTrip();
   } catch (e) {
-    $("chainstatus").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
-  } finally {
-    $("chain_go").disabled = false;
+    $("tripstatus").innerHTML = '<span class="banner err" style="display:inline-block">' + esc(e.message) + "</span>";
   }
 }
-function renderChain(j) {
-  const day = (iso) => new Date(iso + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-  $("chainstatus").innerHTML = (j.warnings || []).map((w) => `<div class="banner warn">${esc(w)}</div>`).join("") +
-    (j.legs.length ? `<span class="note">${j.route_mi} mi to ${esc(j.goal)} in ${j.legs.length} leg${j.legs.length > 1 ? "s" : ""}, ${j.stay_nights}-night stays. A rough frame: only the next leg gets planned, and it's re-sketched from wherever you are.</span>` : "");
-  $("chain").innerHTML = j.legs.length ? `<tr><th>Leave</th><th>To</th><th class="num">~mi</th><th class="num">Stay</th><th></th></tr>` + j.legs.map((l, i) => {
-    const tag = l.is_goal ? '<span class="tag">goal</span>' : l.open ? '<span class="tag">open: find a spot nearby</span>' : `<span class="tag">${SOURCE_LABEL[l.source] || esc(l.source)}</span>`;
-    const btn = i === 0 ? `<button type="button" id="chain_leg0">${l.open ? "Find a spot near here" : "Plan this leg"}</button>` : "";
-    return `<tr><td>${day(l.depart)}</td><td><b>${esc(l.name)}</b> ${tag}</td><td class="num">${l.approx_mi}</td><td class="num">${l.nights ? l.nights + " nights" : ""}</td><td>${btn}</td></tr>`;
+const KIND_TAG = { goal: "destination", open: "open: find a spot nearby" };
+function renderTrip() {
+  $("tripcard").classList.toggle("hidden", !trip);
+  if (!trip) return;
+  const j = trip.j;
+  const day = (iso) => new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  const end = { arrive_by: `in by ${j.arrive_by}`, sunset: "before sunset", polar_night: "no daylight" };
+  $("trip_goal").textContent = j.goal;
+  const arrive = j.arrive ? `, arriving ${day(j.arrive)} about ${new Date(j.arrive).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+  $("tripstatus").innerHTML = (j.warnings || []).map((w) => `<div class="banner warn">${esc(w)}</div>`).join("") +
+    (j.legs.length ? `<span class="note">${j.route_mi} mi in ${j.legs.length} driving days${arrive}. At most ${j.max_day_mi} mi a day, a ceiling and not a target.</span>` : "");
+  $("trip").innerHTML = j.legs.length ? `<tr><th>Day</th><th>To</th><th class="num">Drive</th><th class="num">Layover days</th><th></th></tr>` + j.legs.map((l, i) => {
+    const tag = l.kind === "spot" ? (SOURCE_LABEL[l.source] || esc(l.source)) : KIND_TAG[l.kind];
+    const near = l.nearby.length ? `<div class="note">Near: ${l.nearby.map(esc).join(", ")}</div>`
+      : l.kind === "spot" && !l.cool ? '<div class="note">Nothing to do nearby that we know of</div>' : "";
+    const why = l.reasons.length ? ` title="${esc(l.reasons.join("; "))}"` : "";
+    const score = l.kind === "spot" ? ` <span class="tag"${why}>score ${l.score}</span>` : "";
+    const lay = l.is_goal ? "" : `<input type="number" min="0" max="30" step="1" value="${l.layover}" data-i="${i}" style="width:64px" aria-label="Layover days at ${esc(l.name)}">`;
+    const btn = i === 0 && l.open ? `<button type="button" id="trip_find">Find a spot near here</button>` : "";
+    return `<tr><td>${i + 1}<div class="note">${day(l.depart)}</div></td>
+      <td><b>${esc(l.name)}</b> <span class="tag">${tag}</span>${score}${near}</td>
+      <td class="num">~${l.approx_mi} mi<div class="note">${hm(l.drive_min)} · ${end[l.end_reason] || ""}</div></td>
+      <td class="num">${lay}<div class="note">${l.nights ? l.nights + " night" + (l.nights > 1 ? "s" : "") : ""}</div></td><td>${btn}</td></tr>`;
   }).join("") : "";
-  const b = $("chain_leg0");
-  if (b) b.addEventListener("click", () => {
-    const l = j.legs[0];
-    if (l.open) { findDests(); return; }  // no known spot: search around the next stop
-    $("destination").value = l.is_goal ? j.goal : `${l.lat},${l.lon}`;
-    $("via").value = "";
-    setMode("slow");
-    $("form").requestSubmit();
-  });
+  $("trip").querySelectorAll("input[data-i]").forEach((el) => el.addEventListener("change", () => changeLayover(Number(el.dataset.i), el.value)));
+  const f = $("trip_find");
+  if (f) f.addEventListener("click", findDests);
 }
-$("chain_go").addEventListener("click", sketchChain);
+$("trip_by").addEventListener("change", () => { saveForm(); if (trip) changeLayover(0, (trip.layovers[0] || 0)); });
 
 // ---------- points of interest (#88) ----------
 function reach() { return { mode: $("reach_mode").value, hours: Number($("reach_hours").value) || 3 }; }
@@ -881,6 +921,7 @@ $("shift").addEventListener("input", () => { if (plan) drawMap(); });
 // ---------- start ----------
 $("depart").value = toLocalInput(nextHour());
 loadForm();
+renderTrip();  // a multi-day trip from the last visit (#117)
 fetch("api/plan/last").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) render(j); }).catch(() => {});
 </script>
 </body>
