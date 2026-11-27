@@ -158,6 +158,7 @@ homeassistant/       # HA config: configuration.yaml + packages/*.yaml
 grafana/provisioning/  # datasources/ and dashboards/*.json
 deploy/              # docker-compose.yml, bootstrap.sh (Pi setup), host/ (systemd + gpsd config), mosquitto.conf, .env.example
                      #   mac/: planner copy + HA/Grafana relays on a Mac over Tailscale (#105)
+                     #   backup.sh: nightly restic snapshot; the Mac pulls it (#111, docs/backup.md)
 docs/                # pid-register.md, carplay.md, hardware notes; docs/archive/ dated
 .claude/skills/      # domain skills (see Claude Code specifics)
 ```
@@ -177,6 +178,7 @@ uvx --from shellcheck-py shellcheck -x deploy/*.sh   # lint shell scripts
 
 # On the Pi (docs/hardware/pi-setup.md):
 ./deploy/bootstrap.sh       # idempotent install, secrets, start + provision the stack
+sudo ./deploy/backup.sh     # run tonight's backup now (docs/backup.md)
 ```
 
 All checks (tests, ruff check, ruff format, mypy, yamllint) must pass
@@ -584,3 +586,12 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     Readings go to `bigair/electrical/state` for HA, and to `electrical` in Influx every
     10 s per device. A device silent for 2 min reads as unknown. Keys live only in
     `deploy/.env` (`VICTRON_<NAME>_MAC`/`_KEY`).
+46. **2026-11-26 — Nightly encrypted backups, pulled to the Mac** (Dan's choice, #111).
+    `deploy/backup.sh` runs on `bigair-backup.timer` at 03:30, `Persistent` so a night
+    with the van off runs at the next boot. It stages InfluxDB (`influx backup`), the HA
+    and Grafana SQLite databases (online backup API), HA `.storage` and secrets, bigair's
+    state files and `deploy/.env`. It then keeps them in a local restic repo (7 daily, 4
+    weekly, 6 monthly; `restic check` every night). The Mac's `com.bigair.backup-pull`
+    rsyncs the encrypted repo hourly, and only when the Pi's `status.json` says the last
+    run checked OK. `RESTIC_PASSWORD` is in both env files, and it belongs in Dan's
+    password manager too. Restore steps: `docs/backup.md`.
