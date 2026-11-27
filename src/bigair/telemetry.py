@@ -41,6 +41,7 @@ mpg_instant_30s, fuel_rate_gph, stale, calibrating
 - electrical (tag device: bmv, mppt, dcdc; every 10 s): voltage_v, current_a, power_w, \
 soc_pct, consumed_ah, time_to_go_s (bmv); pv_power_w, yield_today_wh, state (mppt); \
 input_voltage_v, state, off_reason (dcdc)
+- electrical device=house: loads_w, alternator_w, estimated (bigair-derived)
 - load (tag circuit: fan, webasto, lights, internet, inverter, pi): current_a, voltage_v, power_w
 
 van_history:
@@ -49,6 +50,8 @@ van_history:
 odometer_mi, lat, lon, tank_before_gal, tank_after_gal, mpg_since_full, fill_id
 - trip (no tags): distance_mi, fuel_gal, mpg, duration_s, idle_s, cruise_share, \
 brake_events, trip_id
+- energy (no tags; one point per local day at local midnight): solar_wh, alternator_wh, \
+battery_in_wh, battery_out_wh, loads_wh, estimated_wh
 
 Not every measurement has data yet (some sensors aren't fitted). SHOW FIELD KEYS FROM \
 <measurement> or a short LIMIT query tells you what's there."""

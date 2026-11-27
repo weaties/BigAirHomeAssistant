@@ -256,6 +256,30 @@ views:
             grid_options:
               columns: 4
           - type: tile
+            entity: sensor.bigair_van_house_loads
+            name: Loads
+            icon: mdi:lightning-bolt
+            color: purple
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_loads_today
+            name: Loads today
+            icon: mdi:counter
+            color: purple
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
+            entity: sensor.bigair_van_battery_charged_today
+            name: Charged today
+            icon: mdi:battery-plus
+            color: green
+            vertical: true
+            grid_options:
+              columns: 4
+          - type: tile
             entity: sensor.bigair_van_alternator_charger
             name: Alternator charger
             color: blue
@@ -267,6 +291,11 @@ views:
             color: blue
             grid_options:
               columns: 6
+          - type: markdown
+            text_only: true
+            content: >-
+              Power flows and Wh by day: <a href="http://bigair-ha.local:3000/d/bigair-energy?kiosk"
+              target="_blank">Grafana energy dashboard</a> (van Wi-Fi).
 
   # ---------------------------------------------------------------- Fill-up
   - title: Fill-up

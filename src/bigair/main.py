@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from datetime import tzinfo
+
     from bigair.byways import ByWayIndex
     from bigair.claude_service import ClaudeService
     from bigair.destinations import Destination
@@ -66,6 +68,17 @@ def _display(args: argparse.Namespace) -> int:
     return 0
 
 
+def _local_tz(name: str) -> tzinfo:
+    """The van's local zone for daily energy (#113): TZ from deploy/.env, else UTC."""
+    from datetime import UTC
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        return ZoneInfo(name) if name else UTC
+    except (ZoneInfoNotFoundError, ValueError):
+        return UTC
+
+
 def _run(args: argparse.Namespace) -> int:
     import asyncio
     import signal
@@ -117,7 +130,19 @@ def _run(args: argparse.Namespace) -> int:
                     writer.add(point)
 
     # House electrical (#109): Victron Instant Readout over BLE, keys in deploy/.env.
-    electrical = ElectricalTracker()
+    # Daily energy (#113) is integrated in local days; today's totals survive restarts.
+    from bigair.energy import EnergyMeter
+    from bigair.state_file import StateFileError, read_state, write_state
+
+    energy_path = Path(env.get("BIGAIR_ENERGY_FILE", "/data/energy_state.json"))
+    local_tz = _local_tz(env.get("TZ", ""))
+    try:
+        saved = read_state(energy_path)
+    except StateFileError as e:  # today's totals only; start the day over rather than stop
+        logger.warning("energy state unreadable, starting fresh: {}", e)
+        saved = None
+    meter = EnergyMeter(local_tz, saved)
+    electrical = ElectricalTracker(meter)
     vkeys, vproblems = victron_keys(dict(env))
     for problem in vproblems:
         logger.warning("Victron config: {}", problem)
@@ -149,9 +174,18 @@ def _run(args: argparse.Namespace) -> int:
                     warned.add((mac, str(e)))
                     logger.warning("Victron {}: {}", mac, e)
                 continue
-            point = electrical.update(sample)
-            if point is not None and writer is not None:
-                writer.add(point)
+            for point in electrical.update(sample):
+                if writer is not None:
+                    writer.add(point)
+
+    async def energy_saver() -> None:
+        while True:
+            await asyncio.sleep(60)
+            if meter.today.day:
+                try:
+                    write_state(energy_path, meter.to_state(), durable=False)
+                except OSError as e:
+                    logger.warning("energy state write failed: {}", e)
 
     gauge_path = env.get("BIGAIR_GAUGE_FILE")
 
@@ -199,7 +233,7 @@ def _run(args: argparse.Namespace) -> int:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
         tasks = [
-            *([asyncio.create_task(victron())] if vkeys else []),
+            *([asyncio.create_task(t()) for t in (victron, energy_saver)] if vkeys else []),
             asyncio.create_task(ingest()),
             asyncio.create_task(gps()),
             asyncio.create_task(influx_flusher()),
@@ -221,6 +255,9 @@ def _run(args: argparse.Namespace) -> int:
         await stop.wait()
         logger.info("stopping: saving fuel state")
         svc.flush(datetime.now(UTC))
+        if meter.today.day:
+            with contextlib.suppress(OSError):
+                write_state(energy_path, meter.to_state(), durable=False)
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

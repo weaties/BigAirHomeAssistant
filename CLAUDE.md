@@ -150,6 +150,7 @@ src/bigair/          # all Python; one small module per concern
   victron_ble.py     #   Victron Instant Readout decoder: AES-CTR + bit layouts (#109)
   victron_io.py      #   edge: BLE advertisements via bleak / BlueZ D-Bus (#109)
   electrical.py      #   latest Victron reading per device → MQTT state, Influx points (#109)
+  energy.py          #   daily Wh by source and load, integrated on monotonic time (#113)
   mqtt_io.py / influx_io.py   # edges (M1)
   main.py            #   wiring only
 tests/               # pytest, runs anywhere, no hardware
@@ -205,10 +206,11 @@ tag with trip IDs, prices, coordinates or free text.
 | `driver` | raw | `source` (wican, can) | `throttle_pct`, `cruise_active`, `cruise_set_mph`, `brake_active` |
 | `fuel` | raw | `method` (fuel_rate, maf_faer, maf_fixed) | `tank_gal`, `engine_used_gal`, `heater_used_gal`, `range_mi`, `mpg_rolling`, `mpg_instant_30s`, `fuel_rate_gph`, `stale`, `calibrating` |
 | `heater` | raw | `method` (wbus_pulses, runtime_datasheet, current) | `running`, `power_level`, `pump_hz`, `fuel_gph`, `used_gal` |
-| `electrical` | raw | `device` (bmv, mppt, dcdc) | `voltage_v`, `current_a`, `power_w`, `soc_pct`, `consumed_ah`, `time_to_go_s`, `alarm`, `aux_voltage_v`, `midpoint_voltage_v`, `temperature_c` (bmv); `pv_power_w`, `yield_today_wh`, `load_current_a` (mppt); `input_voltage_v`, `off_reason` (dcdc); `state`, `charger_error` (mppt, dcdc) |
+| `electrical` | raw | `device` (bmv, mppt, dcdc, house) | `voltage_v`, `current_a`, `power_w`, `soc_pct`, `consumed_ah`, `time_to_go_s`, `alarm`, `aux_voltage_v`, `midpoint_voltage_v`, `temperature_c` (bmv); `pv_power_w`, `yield_today_wh`, `load_current_a` (mppt); `input_voltage_v`, `off_reason` (dcdc); `state`, `charger_error` (mppt, dcdc); `loads_w`, `alternator_w`, `estimated` (house: bigair's derived flows, #113) |
 | `load` | raw | `circuit` (fan, webasto, lights, internet, inverter, pi) | `current_a`, `voltage_v`, `power_w` |
 | `track` | history | `source` (gps_bt) | `lat`, `lon`, `alt_m`, `speed_mph`, `heading_deg`, `mpg_30s`, `grade_pct`, `hdop`, `trip_id` |
 | `fill_up` | history | `source` (live, manual, historical), `fill_type` (full, partial), `status` (confirmed, pending, skipped) | `gallons`, `price_per_gal`, `total_cost`, `odometer_mi`, `lat`, `lon`, `tank_before_gal`, `tank_after_gal`, `mpg_since_full`, `fill_id` |
+| `energy` | history | — | `solar_wh`, `alternator_wh`, `battery_in_wh`, `battery_out_wh`, `loads_wh`, `estimated_wh`: one point per local day, stamped at local midnight, rewritten as the day's running total (#113) |
 | `trip` | history | — | `distance_mi`, `fuel_gal`, `mpg`, `duration_s`, `idle_s`, `cruise_share`, `brake_events`, `trip_id` |
 
 Adding a signal: `/influx-schema` (update this table in the same PR).
@@ -595,3 +597,11 @@ Dated, newest last. Supersede an entry by adding a new one that names it.
     rsyncs the encrypted repo hourly, and only when the Pi's `status.json` says the last
     run checked OK. `RESTIC_PASSWORD` is in both env files, and it belongs in Dan's
     password manager too. Restore steps: `docs/backup.md`.
+47. **2026-11-26 — Energy is integrated in bigair; loads are derived until the load node
+    lands** (#113). `energy.py` turns the Victron flows into Wh per local day on
+    monotonic time, never across a gap over 120 s (Grafana's `integral()` would
+    bridge an overnight outage). Loads = solar − battery net while the alternator
+    charger is off. While the Orion charges, its record has no current, so loads are
+    held and alternator = net − solar + loads, both flagged as estimates. Daily totals
+    go to `energy` in van_history: one point per local day, stamped at local midnight
+    and rewritten as it grows. Grafana `bigair-energy` shows them.

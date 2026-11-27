@@ -29,7 +29,7 @@ FieldValue = float | int | bool | str | None
 
 RAW_BUCKET = "van_raw"
 HISTORY_BUCKET = "van_history"
-HISTORY_MEASUREMENTS = frozenset({"track", "fill_up", "trip"})
+HISTORY_MEASUREMENTS = frozenset({"track", "fill_up", "trip", "energy"})
 
 
 @dataclass(frozen=True)
