@@ -1103,7 +1103,8 @@
           },
           "rawQuery": true,
           "resultFormat": "time_series",
-          "query": "SELECT \"solar_wh\" AS \"Solar\", \"alternator_wh\" AS \"Alternator\", \"loads_wh\" AS \"Loads\" FROM \"energy\" WHERE $timeFilter"
+          "query": "SELECT \"solar_wh\" AS \"Solar\", \"alternator_wh\" AS \"Alternator\", \"loads_wh\" AS \"Loads\" FROM \"energy\" WHERE $timeFilter",
+          "alias": "$col"
         }
       ],
       "transformations": [],
@@ -1159,6 +1160,18 @@
                   "mode": "fixed",
                   "fixedColor": "purple"
                 }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:ddd D"
               }
             ]
           }

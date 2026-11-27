@@ -8,7 +8,7 @@ quiet reads as unknown, never as its last value.
 
 With an EnergyMeter (#113) it also writes the derived house flows (`electrical`,
 device=house: loads_w, alternator_w) with each battery-monitor point, plus today's
-running energy totals (`energy`) every 10 min and once more when the day rolls over.
+running energy totals (`energy`) every minute and once more when the day rolls over.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 INFLUX_EVERY_S = 10.0  # Victron advertises about once a second; 10 s is plenty of history
 STALE_AFTER_S = 120.0
-ENERGY_EVERY_S = 600.0
+ENERGY_EVERY_S = 60.0  # rewrites the same daily point, so cheap
 
 _NOT_FIELDS = {"ts", "mono_s", "device"}
 
