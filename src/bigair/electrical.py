@@ -5,6 +5,10 @@ Keeps the latest decoded reading per device. It gives the MQTT state that HA rea
 InfluxDB. Freshness and throttling use the edge's monotonic time, so a wall-clock
 step can't make a reading look fresh or stale (#107). A device that has gone
 quiet reads as unknown, never as its last value.
+
+With an EnergyMeter (#113) it also writes the derived house flows (`electrical`,
+device=house: loads_w, alternator_w) with each battery-monitor point, plus today's
+running energy totals (`energy`) every 10 min and once more when the day rolls over.
 """
 
 from __future__ import annotations
@@ -16,10 +20,12 @@ from typing import TYPE_CHECKING, ClassVar
 from bigair.influx_io import Point
 
 if TYPE_CHECKING:
+    from bigair.energy import EnergyMeter
     from bigair.signals import VictronSample
 
 INFLUX_EVERY_S = 10.0  # Victron advertises about once a second; 10 s is plenty of history
 STALE_AFTER_S = 120.0
+ENERGY_EVERY_S = 600.0
 
 _NOT_FIELDS = {"ts", "mono_s", "device"}
 
@@ -41,26 +47,65 @@ class ElectricalTracker:
         "dcdc_input_voltage_v": ("dcdc", "input_voltage_v"),
         "dcdc_output_voltage_v": ("dcdc", "voltage_v"),
     }
-    KEYS: ClassVar[tuple[str, ...]] = tuple(_MAP)
+    ENERGY_KEYS: ClassVar[tuple[str, ...]] = (
+        "loads_w",
+        "alternator_w",
+        "energy_estimated",
+        "solar_today_wh",
+        "alternator_today_wh",
+        "loads_today_wh",
+        "battery_in_today_wh",
+        "battery_out_today_wh",
+    )
+    KEYS: ClassVar[tuple[str, ...]] = (*_MAP, *ENERGY_KEYS)
 
-    def __init__(self) -> None:
+    def __init__(self, meter: EnergyMeter | None = None) -> None:
         self.latest: dict[str, VictronSample] = {}
+        self.meter = meter
         self._written: dict[str, float] = {}
+        self._energy_written: float | None = None
 
-    def update(self, s: VictronSample) -> Point | None:
-        """Record a reading; return an Influx point when this device is due one."""
+    def update(self, s: VictronSample) -> list[Point]:
+        """Record a reading; return the Influx points that are due."""
         self.latest[s.device] = s
+        points: list[Point] = []
+        if self.meter is not None:
+            before = self.meter.today.day
+            self.meter.update(s)
+            if before and self.meter.yesterday and self.meter.yesterday.day == before:
+                points.append(self.meter.day_point(self.meter.yesterday))  # final totals
+                self._energy_written = None
         last = self._written.get(s.device)
         if last is not None and s.mono_s - last < INFLUX_EVERY_S:
-            return None
+            return points
         self._written[s.device] = s.mono_s
         values = {f.name: getattr(s, f.name) for f in fields(s) if f.name not in _NOT_FIELDS}
-        return Point(
-            "electrical",
-            s.ts,
-            tags={"device": s.device},
-            fields={k: v for k, v in values.items() if v is not None},
+        points.append(
+            Point(
+                "electrical",
+                s.ts,
+                tags={"device": s.device},
+                fields={k: v for k, v in values.items() if v is not None},
+            )
         )
+        if self.meter is not None and s.device == "bmv":
+            f = self.meter.flows
+            house = {"loads_w": f.loads_w, "alternator_w": f.alternator_w}
+            if any(v is not None for v in house.values()):
+                fields_ = {k: round(v, 1) for k, v in house.items() if v is not None}
+                points.append(
+                    Point(
+                        "electrical",
+                        s.ts,
+                        tags={"device": "house"},
+                        fields={**fields_, "estimated": f.estimated},
+                    )
+                )
+            due = self._energy_written is None or s.mono_s - self._energy_written >= ENERGY_EVERY_S
+            if due and self.meter.today.day:
+                self._energy_written = s.mono_s
+                points.append(self.meter.day_point())
+        return points
 
     def state_payload(self, mono_now: float) -> str:
         out: dict[str, object] = {}
@@ -74,6 +119,13 @@ class ElectricalTracker:
             if key == "house_power_w" and value is not None:
                 value = round(float(value), 1)
             out[key] = value
+        energy: dict[str, object] = dict.fromkeys(self.ENERGY_KEYS)
+        if self.meter is not None:
+            energy.update(self.meter.payload())
+            bmv = self.latest.get("bmv")
+            if bmv is None or mono_now - bmv.mono_s > STALE_AFTER_S:
+                energy.update(loads_w=None, alternator_w=None)  # live flows go unknown
+        out.update(energy)
         return json.dumps(out, sort_keys=True)
 
 

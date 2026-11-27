@@ -85,7 +85,7 @@ def test_naive_timestamps_are_rejected() -> None:
 def test_buckets() -> None:
     assert bucket_for("fuel") == "van_raw"
     assert bucket_for("engine") == "van_raw"
-    for m in ("track", "fill_up", "trip"):
+    for m in ("track", "fill_up", "trip", "energy"):  # energy: daily totals, kept forever (#113)
         assert bucket_for(m) == "van_history"
 
 

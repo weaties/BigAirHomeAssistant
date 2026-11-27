@@ -56,15 +56,14 @@ def _dcdc(sec: float) -> VictronSample:
 
 def test_first_reading_per_device_is_written_then_throttled() -> None:
     t = ElectricalTracker()
-    assert t.update(_bmv(0)) is not None
-    assert t.update(_bmv(1)) is None
-    assert t.update(_mppt(1)) is not None  # throttled per device
-    assert t.update(_bmv(INFLUX_EVERY_S)) is not None
+    assert t.update(_bmv(0))
+    assert t.update(_bmv(1)) == []
+    assert t.update(_mppt(1))  # throttled per device
+    assert t.update(_bmv(INFLUX_EVERY_S))
 
 
 def test_influx_point_is_tagged_by_device_with_unit_suffixed_fields() -> None:
-    p = ElectricalTracker().update(_bmv(0))
-    assert p is not None
+    (p,) = ElectricalTracker().update(_bmv(0))
     assert to_line(p) == (
         "electrical,device=bmv voltage_v=13.27,current_a=-3.663,power_w=-48.608,soc_pct=99.2,"
         "consumed_ah=-1.7,time_to_go_s=207360i,alarm=0i 1795736400000"
@@ -73,9 +72,8 @@ def test_influx_point_is_tagged_by_device_with_unit_suffixed_fields() -> None:
 
 def test_solar_and_dcdc_points_carry_their_own_fields() -> None:
     t = ElectricalTracker()
-    solar = t.update(_mppt(0))
-    dcdc = t.update(_dcdc(0))
-    assert solar is not None and dcdc is not None
+    (solar,) = t.update(_mppt(0))
+    (dcdc,) = t.update(_dcdc(0))
     assert solar.fields["pv_power_w"] == 9
     assert solar.fields["yield_today_wh"] == 60.0
     assert solar.fields["state"] == "bulk"
@@ -88,7 +86,7 @@ def test_state_payload_has_every_key_and_nulls_until_seen() -> None:
     t = ElectricalTracker()
     payload = json.loads(t.state_payload(mono_now=100))
     assert set(payload) == set(t.KEYS)
-    assert all(v is None for v in payload.values())
+    assert all(v is None for v in payload.values())  # no meter: energy keys null too
 
 
 def test_state_payload_maps_devices_to_house_solar_and_dcdc() -> None:
@@ -145,3 +143,25 @@ def test_victron_keys_from_env_pairs() -> None:
         "VICTRON_ORION_MAC isn't a MAC address",
         "VICTRON_SOLAR_KEY isn't 32 hex digits",
     ]
+
+
+def test_with_a_meter_bmv_points_bring_house_flows_and_daily_energy() -> None:
+    from zoneinfo import ZoneInfo
+
+    from bigair.energy import EnergyMeter
+
+    t = ElectricalTracker(EnergyMeter(ZoneInfo("America/Los_Angeles")))
+    t.update(_mppt(0))
+    t.update(_dcdc(0))
+    points = t.update(_bmv(0))
+    kinds = [(p.measurement, p.tags.get("device")) for p in points]
+    assert kinds == [("electrical", "bmv"), ("electrical", "house"), ("energy", None)]
+    house = points[1].fields
+    # solar 13.28 V × 0.5 A = 6.64 W, net −48.608 W → loads 55.2 W; Orion off → 0 W
+    assert house == {"loads_w": 55.2, "alternator_w": 0.0, "estimated": False}
+    p = json.loads(t.state_payload(mono_now=101))
+    assert p["loads_w"] == pytest.approx(55.2)
+    assert p["alternator_w"] == 0.0
+    assert p["energy_estimated"] is False
+    assert p["loads_today_wh"] == 0.0  # a single reading integrates nothing
+    assert json.loads(t.state_payload(mono_now=100 + STALE_AFTER_S + 1))["loads_w"] is None

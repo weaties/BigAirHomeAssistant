@@ -150,6 +150,20 @@ ELECTRICAL_SENSORS = (
     _Sensor(
         "dcdc_output_voltage_v", "Alternator charger output", "V", 2, "voltage", state_topic=_E
     ),
+    # Energy (#113): bigair's integration of the flows above. Loads and alternator are
+    # estimates while the Orion charges (see energy.py).
+    _Sensor("loads_w", "House loads", "W", 0, "power", state_topic=_E),
+    _Sensor("alternator_w", "Alternator power", "W", 0, "power", state_topic=_E),
+    *(
+        _Sensor(key, name, "Wh", 0, "energy", state_topic=_E, state_class="total_increasing")
+        for key, name in (
+            ("solar_today_wh", "Solar to battery today"),
+            ("alternator_today_wh", "Alternator today"),
+            ("loads_today_wh", "Loads today"),
+            ("battery_in_today_wh", "Battery charged today"),
+            ("battery_out_today_wh", "Battery used today"),
+        )
+    ),
 )
 
 _ROUNDING = {

@@ -134,7 +134,7 @@ def test_electrical_sensors_read_the_trackers_keys() -> None:
     """#109: every Victron sensor's template key is in the tracker's payload."""
     from bigair.electrical import ElectricalTracker
 
-    keys = set(ElectricalTracker.KEYS)
+    keys = set(ElectricalTracker.KEYS) - {"energy_estimated"}  # a flag, not a sensor
     configs = [c for c in _configs().values() if c.get("state_topic") == ELECTRICAL_STATE_TOPIC]
     assert {c["object_id"] for c in configs} == keys
     for c in configs:
